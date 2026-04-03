@@ -1,0 +1,25 @@
+project_id = "jtsopnmudnvyqvlaptof"
+
+[functions.facebook-oauth]
+verify_jwt = false
+
+[functions.auto-poster]
+verify_jwt = false
+
+[functions.generate-schedule]
+verify_jwt = false
+
+[functions.generate-content]
+verify_jwt = false
+
+[functions.validate-drive-links]
+verify_jwt = false
+
+[functions.test-drive-download]
+verify_jwt = false
+
+[functions.test-folder-list]
+verify_jwt = false
+
+[functions.list-folder-videos]
+verify_jwt = false
