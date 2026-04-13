@@ -415,7 +415,7 @@ async function downloadVideoWithMetadata(driveUrl: string): Promise<VideoDownloa
 
 // ============ Cloudinary Video Watermarking ============
 
-async function applyWatermark(videoBlob: Blob, logoUrl: string): Promise<Blob> {
+async function applyWatermark(videoBlob: Blob, logoUrl: string, opacity = 80): Promise<Blob> {
   const cloudName = Deno.env.get('CLOUDINARY_CLOUD_NAME')
   const apiKey = Deno.env.get('CLOUDINARY_API_KEY')
   const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET')
@@ -426,7 +426,7 @@ async function applyWatermark(videoBlob: Blob, logoUrl: string): Promise<Blob> {
   }
 
   try {
-    console.log('Watermarking video via Cloudinary...')
+    console.log(`Watermarking video via Cloudinary (opacity: ${opacity}%)...`)
     
     // 1. Upload video to Cloudinary
     const timestamp = Math.floor(Date.now() / 1000)
@@ -450,10 +450,11 @@ async function applyWatermark(videoBlob: Blob, logoUrl: string): Promise<Blob> {
     const uploadData = await uploadResp.json()
     const publicId = uploadData.public_id
 
-    // 2. Generate watermark URL
-    // Format: l_fetch:<base64_logo_url>/fl_layer_apply,g_south_east,x_20,y_20,w_150/
+    // 2. Generate watermark URL with opacity support
+    // opacity is 0-100; Cloudinary uses o_{value} for opacity (0-100)
+    const clampedOpacity = Math.max(0, Math.min(100, Math.round(opacity)))
     const logoB64 = btoa(logoUrl).replace(/\//g, '_').replace(/\+/g, '-')
-    const transformation = `l_fetch:${logoB64},fl_layer_apply,g_south_east,x_30,y_30,w_0.15/`
+    const transformation = `l_fetch:${logoB64},o_${clampedOpacity},fl_layer_apply,g_south_east,x_30,y_30,w_0.15/`
     const watermarkedUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformation}${publicId}.mp4`
     
     console.log('Downloading watermarked video:', watermarkedUrl)
@@ -992,7 +993,8 @@ serve(async (req) => {
 
         // Apply visual branding (logo) if enabled
         if (campaign?.branding_logo_url) {
-          const watermarkedBlob = await applyWatermark(videoResult.blob, campaign.branding_logo_url)
+          const logoOpacity = typeof campaign.logo_opacity === 'number' ? campaign.logo_opacity : 80
+          const watermarkedBlob = await applyWatermark(videoResult.blob, campaign.branding_logo_url, logoOpacity)
           videoResult.blob = watermarkedBlob
         }
 
@@ -1086,6 +1088,13 @@ serve(async (req) => {
           console.log(`⚠️ Aspect ratio ${videoResult.originalAspectRatio.toFixed(2)} may need adjustment. Facebook may add letterboxing.`)
         }
 
+        // Determine isShort for YouTube based on campaign youtube_upload_type:
+        // 'shorts' → always short, 'long_form' → always long, 'auto' → use video duration
+        let isYouTubeShort = videoResult.isReel
+        const ytUploadType = campaign?.youtube_upload_type || 'auto'
+        if (ytUploadType === 'shorts') isYouTubeShort = true
+        else if (ytUploadType === 'long_form') isYouTubeShort = false
+
         const fullCaption = hashtags.length > 0 ? `${caption}\n\n${hashtags.map(h => `#${h}`).join(' ')}` : caption
         const isReel = videoResult.isReel
         const uploadType = isReel ? 'Reel' : 'Long Video'
@@ -1102,7 +1111,12 @@ serve(async (req) => {
         // Ensure we load campaign data if not loaded by the prompt logic
         const { data: campaignTitle } = await supabase.from('campaigns').select('title, user_id').eq('id', post.campaign_id).single()
         
-        const pConf = post.platforms || { facebook: true, instagram: false, youtube: false }
+        // Infer platform targets from populated channel/page IDs when platforms field is null
+        const pConf = post.platforms ?? {
+          facebook: !!post.facebook_page_id,
+          instagram: !!post.instagram_account_id,
+          youtube: !!post.youtube_channel_id,
+        }
 
         // 1. Facebook
         if (pConf.facebook && post.facebook_page_id) {
@@ -1166,8 +1180,8 @@ serve(async (req) => {
            } else {
               try {
                 const activeToken = await refreshYouTubeTokenIfNeeded(supabase, ytChannel)
-                console.log(`Uploading to YouTube: ${ytChannel.channel_name}...`)
-                const res = await uploadVideoToYouTube(ytChannel.channel_id, activeToken, videoResult.blob, campaign?.title || 'Shorts', fullCaption, hashtags, isReel)
+                console.log(`Uploading to YouTube: ${ytChannel.channel_name} (${isYouTubeShort ? 'Short' : 'Long Video'})...`)
+                const res = await uploadVideoToYouTube(ytChannel.channel_id, activeToken, videoResult.blob, campaign?.title || 'Video', fullCaption, hashtags, isYouTubeShort)
                 if ('error' in res) {
                   allSuccess = false; errors.push(`YT: ${res.error.message}`)
                 } else {

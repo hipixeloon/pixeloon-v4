@@ -109,6 +109,12 @@ export default function NewCampaign() {
   // Quality control options
   const [skipLowQuality, setSkipLowQuality] = useState(true);
   
+  // YouTube upload type
+  const [youtubeUploadType, setYoutubeUploadType] = useState<'auto' | 'shorts' | 'long_form'>('auto');
+
+  // Branding logo opacity (0-100)
+  const [logoOpacity, setLogoOpacity] = useState(80);
+  
   // AI Caption settings
   const [captionLength, setCaptionLength] = useState<'short' | 'medium' | 'long'>('medium');
   const [hashtagCount, setHashtagCount] = useState(8);
@@ -317,6 +323,14 @@ export default function NewCampaign() {
       // Add caption settings
       campaignData.caption_length = captionLength;
       campaignData.hashtag_count = hashtagCount;
+
+      // YouTube upload type (only relevant if YouTube channels are selected)
+      if (selectedYouTubeChannelIds.length > 0) {
+        campaignData.youtube_upload_type = youtubeUploadType;
+      }
+
+      // Logo opacity for watermarking
+      campaignData.logo_opacity = logoOpacity;
 
       // Set video source based on mode
       if (sourceType === 'folder' && folderInfo) {
@@ -807,6 +821,62 @@ https://drive.google.com/file/d/def456/view"
               />
             </div>
           )}
+        </section>
+
+        {/* YouTube Upload Type - shown only when YouTube channels are selected */}
+        {selectedYouTubeChannelIds.length > 0 && (
+          <section className="space-y-4">
+            <h2 className="text-ios-title3 text-foreground px-1">YouTube Upload Type</h2>
+            <div className="ios-card p-4 space-y-3">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Upload Mode</Label>
+                <Select value={youtubeUploadType} onValueChange={(v) => setYoutubeUploadType(v as 'auto' | 'shorts' | 'long_form')}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select upload type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">🤖 Auto-detect (based on video duration)</SelectItem>
+                    <SelectItem value="shorts">📱 YouTube Shorts (≤60s, vertical)</SelectItem>
+                    <SelectItem value="long_form">🎬 Long-form Video</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="p-3 rounded-lg bg-secondary/50 border border-border">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    {youtubeUploadType === 'auto' && <p>Duration ≤60s → Shorts; &gt;60s → Long-form. <strong>#Shorts</strong> tag added automatically.</p>}
+                    {youtubeUploadType === 'shorts' && <p>All videos uploaded as <strong>YouTube Shorts</strong>. <strong>#Shorts</strong> tag is added to every post automatically.</p>}
+                    {youtubeUploadType === 'long_form' && <p>All videos uploaded as standard <strong>long-form YouTube videos</strong>. Use this for full-length content.</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Logo Opacity (Branding) */}
+        <section className="space-y-4">
+          <h2 className="text-ios-title3 text-foreground px-1">Branding / Logo</h2>
+          <div className="ios-card p-4 space-y-3">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Logo Opacity: {logoOpacity}%</Label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={logoOpacity}
+                  onChange={(e) => setLogoOpacity(parseInt(e.target.value))}
+                  className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <span className="text-sm text-muted-foreground w-10">{logoOpacity}%</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Controls the watermark logo opacity when Cloudinary branding is configured. 0% = invisible, 100% = fully opaque.
+              </p>
+            </div>
+          </div>
         </section>
 
         {/* Video Quality Settings */}
