@@ -8,12 +8,29 @@ export async function uploadVideoToYouTube(
   isShort: boolean
 ): Promise<{ id: string; permalinkUrl?: string } | { error: { message: string } }> {
   try {
-    console.log(`Starting YouTube upload for channel ${channelId}. Size: ${videoBlob.size}`)
-    
-    // YouTube Data API requires a 2-step resumable upload or a simple multipart upload.
-    // Given Deno/fetch constraints, a direct upload to /upload/youtube/v3/videos?uploadType=multipart 
-    // is easiest, but requires constructing a multipart body manually.
-    // Wait, resumable upload is safer for large files.
+    console.log(`Starting YouTube upload for channel ${channelId}. Size: ${videoBlob.size}, isShort: ${isShort}`)
+
+    // For YouTube Shorts: ensure #Shorts is in title (max 100 chars) and tags
+    let uploadTitle = title.substring(0, 100)
+    let uploadDescription = description
+    let uploadTags = [...tags]
+
+    if (isShort) {
+      // YouTube Shorts requires #Shorts in title or description for discovery
+      if (!uploadTitle.toLowerCase().includes('#shorts')) {
+        const shortsTag = ' #Shorts'
+        uploadTitle = (uploadTitle + shortsTag).substring(0, 100)
+      }
+      if (!uploadDescription.toLowerCase().includes('#shorts')) {
+        uploadDescription = uploadDescription + '\n\n#Shorts'
+      }
+      if (!uploadTags.some(t => t.toLowerCase() === 'shorts')) {
+        uploadTags = ['Shorts', ...uploadTags]
+      }
+    }
+
+    // Limit tags to YouTube API max (500 chars total, max 30 tags)
+    uploadTags = uploadTags.slice(0, 30)
     
     // 1. Initiate Resumable Upload
     const initHeaders = new Headers()
@@ -24,9 +41,10 @@ export async function uploadVideoToYouTube(
 
     const requestBody = {
       snippet: {
-        title: title.substring(0, 100), // Max 100 chars
-        description: description,
-        tags: tags.slice(0, 15) // Limit tags
+        title: uploadTitle,
+        description: uploadDescription,
+        tags: uploadTags,
+        categoryId: '22' // People & Blogs - safe default for both Shorts and regular videos
       },
       status: {
         privacyStatus: 'public',

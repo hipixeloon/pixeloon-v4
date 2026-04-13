@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -158,10 +159,11 @@ async function generateVideoAwareCaption(
   description: string,
   videoInfo: { name: string; duration: number; width: number; height: number; thumbnail: string | null },
   index: number,
-  total: number
+  total: number,
+  geminiApiKey: string
 ): Promise<GeneratedCaption> {
-  const GEMINI_API_KEY = Deno.env.get('GOOGLE_GEMINI_API_KEY');
-  if (!GEMINI_API_KEY) throw new Error('GOOGLE_GEMINI_API_KEY not configured');
+  const GEMINI_API_KEY = geminiApiKey;
+  if (!GEMINI_API_KEY) throw new Error('No Gemini API key available');
 
   const aspectRatio = videoInfo.width && videoInfo.height 
     ? (videoInfo.width / videoInfo.height).toFixed(2) 
@@ -290,7 +292,7 @@ serve(async (req) => {
   }
 
   try {
-    const { description, videoCount = 1, videoUrls = [] } = await req.json();
+    const { description, videoCount = 1, videoUrls = [], userId: bodyUserId } = await req.json();
     
     if (!description) {
       return new Response(
@@ -299,10 +301,42 @@ serve(async (req) => {
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY");
+    // Resolve user ID from body or Authorization header
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    let resolvedUserId = bodyUserId
+    if (!resolvedUserId) {
+      const authHeader = req.headers.get('Authorization')
+      if (authHeader) {
+        const token = authHeader.replace('Bearer ', '')
+        const { data: { user } } = await supabase.auth.getUser(token)
+        resolvedUserId = user?.id
+      }
+    }
+
+    // Try per-user Gemini key first, then fall back to system key
+    let GEMINI_API_KEY: string | null = null
+    if (resolvedUserId) {
+      const { data: keyData } = await supabase
+        .from('user_api_keys')
+        .select('api_key')
+        .eq('user_id', resolvedUserId)
+        .eq('key_name', 'gemini')
+        .single()
+      if (keyData?.api_key) {
+        GEMINI_API_KEY = keyData.api_key
+        console.log(`Using per-user Gemini key for user ${resolvedUserId}`)
+      }
+    }
+    if (!GEMINI_API_KEY) {
+      GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY") ?? null
+    }
+
     if (!GEMINI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "GOOGLE_GEMINI_API_KEY is not configured" }),
+        JSON.stringify({ error: "No Gemini API key found. Please add your key in Settings → API Keys." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -337,7 +371,7 @@ serve(async (req) => {
       }
 
       try {
-        const result = await generateVideoAwareCaption(description, videoInfo, i, count);
+        const result = await generateVideoAwareCaption(description, videoInfo, i, count, GEMINI_API_KEY);
         captions.push(result);
       } catch (err) {
         console.error(`Error generating caption ${i + 1}:`, err);
