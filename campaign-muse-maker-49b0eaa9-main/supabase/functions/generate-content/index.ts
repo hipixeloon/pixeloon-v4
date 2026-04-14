@@ -93,11 +93,7 @@ async function createSignedJwt(email: string, privateKey: string): Promise<strin
   return `${unsignedToken}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
 
-async function getGoogleAccessToken(): Promise<string> {
-  const email = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_EMAIL');
-  const privateKey = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY');
-  if (!email || !privateKey) throw new Error('Google service account credentials not configured');
-  
+async function getGoogleAccessToken(email: string, privateKey: string): Promise<string> {
   const jwt = await createSignedJwt(email, privateKey);
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -316,7 +312,7 @@ serve(async (req) => {
       }
     }
 
-    // Try per-user Gemini key first, then fall back to system key
+    // Require per-user Gemini key
     let GEMINI_API_KEY: string | null = null
     if (resolvedUserId) {
       const { data: keyData } = await supabase
@@ -330,9 +326,6 @@ serve(async (req) => {
         console.log(`Using per-user Gemini key for user ${resolvedUserId}`)
       }
     }
-    if (!GEMINI_API_KEY) {
-      GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY") ?? null
-    }
 
     if (!GEMINI_API_KEY) {
       return new Response(
@@ -341,12 +334,28 @@ serve(async (req) => {
       );
     }
 
+    let serviceAccountEmail: string | null = null
+    let serviceAccountPrivateKey: string | null = null
+    if (resolvedUserId) {
+      const { data: googleKeys } = await supabase
+        .from('user_api_keys')
+        .select('key_name, api_key')
+        .eq('user_id', resolvedUserId)
+        .in('key_name', ['google_service_account_email', 'google_service_account_private_key'])
+
+      const googleKeyMap = new Map((googleKeys || []).map((row: { key_name: string; api_key: string }) => [row.key_name, row.api_key]))
+      serviceAccountEmail = googleKeyMap.get('google_service_account_email') || null
+      serviceAccountPrivateKey = googleKeyMap.get('google_service_account_private_key') || null
+    }
+
     console.log("Generating AI content for:", description.substring(0, 100));
     console.log("Video URLs provided:", videoUrls.length);
 
     let accessToken: string | null = null;
     try {
-      accessToken = await getGoogleAccessToken();
+      if (serviceAccountEmail && serviceAccountPrivateKey) {
+        accessToken = await getGoogleAccessToken(serviceAccountEmail, serviceAccountPrivateKey);
+      }
     } catch (err) {
       console.log("Could not get Google access token, will generate without thumbnails:", err);
     }

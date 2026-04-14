@@ -4,7 +4,7 @@ import { IOSButton } from '@/components/ui/IOSButton';
 import { IOSInput } from '@/components/ui/IOSInput';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Moon, Sun, Facebook, LogOut, RefreshCw, Bug, CheckCircle, XCircle, Key, Eye, EyeOff, Loader2, Lock, Youtube, Instagram, ExternalLink } from 'lucide-react';
+import { Moon, Sun, Facebook, LogOut, RefreshCw, Bug, CheckCircle, XCircle, Key, Eye, EyeOff, Loader2, Lock, Youtube, Instagram, ExternalLink, Upload, Trash2, Image as ImageIcon } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/hooks/use-toast';
@@ -25,6 +25,14 @@ export default function Settings() {
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
   const [hasGeminiKey, setHasGeminiKey] = useState(false);
+  const [facebookAppId, setFacebookAppId] = useState('');
+  const [facebookAppSecret, setFacebookAppSecret] = useState('');
+  const [youtubeClientId, setYouTubeClientId] = useState('');
+  const [youtubeClientSecret, setYouTubeClientSecret] = useState('');
+  const [savingOAuthKeys, setSavingOAuthKeys] = useState(false);
+  const [watermarkPath, setWatermarkPath] = useState<string | null>(null);
+  const [watermarkPublicUrl, setWatermarkPublicUrl] = useState<string | null>(null);
+  const [uploadingWatermark, setUploadingWatermark] = useState(false);
   
   // Change password state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -50,6 +58,8 @@ export default function Settings() {
   useEffect(() => {
     if (user) {
       fetchGeminiKey();
+      fetchOAuthKeys();
+      fetchWatermarkPath();
     }
   }, [user]);
 
@@ -65,6 +75,39 @@ export default function Settings() {
     if (data) {
       setHasGeminiKey(true);
       setGeminiKey('••••••••••••••••');
+    }
+  };
+
+  const fetchOAuthKeys = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('user_api_keys')
+      .select('key_name, api_key')
+      .eq('user_id', user.id)
+      .in('key_name', ['facebook_app_id', 'facebook_app_secret', 'youtube_client_id', 'youtube_client_secret']);
+
+    const map = new Map((data || []).map((item) => [item.key_name, item.api_key]));
+    setFacebookAppId(map.get('facebook_app_id') ? '••••••••••••••••' : '');
+    setFacebookAppSecret(map.get('facebook_app_secret') ? '••••••••••••••••' : '');
+    setYouTubeClientId(map.get('youtube_client_id') ? '••••••••••••••••' : '');
+    setYouTubeClientSecret(map.get('youtube_client_secret') ? '••••••••••••••••' : '');
+  };
+
+  const fetchWatermarkPath = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('watermark_image_path')
+      .eq('user_id', user.id)
+      .single();
+
+    const path = data?.watermark_image_path || null;
+    setWatermarkPath(path);
+    if (path) {
+      const { data: publicUrlData } = supabase.storage.from('user-watermarks').getPublicUrl(path);
+      setWatermarkPublicUrl(publicUrlData.publicUrl);
+    } else {
+      setWatermarkPublicUrl(null);
     }
   };
 
@@ -117,6 +160,93 @@ export default function Settings() {
     }
   };
 
+  const handleSaveOAuthKeys = async () => {
+    if (!user) return;
+    setSavingOAuthKeys(true);
+
+    try {
+      const updates: Array<{ key_name: string; api_key: string }> = [];
+      const cleanFacebookAppId = facebookAppId.trim();
+      const cleanFacebookAppSecret = facebookAppSecret.trim();
+      const cleanYouTubeClientId = youtubeClientId.trim();
+      const cleanYouTubeClientSecret = youtubeClientSecret.trim();
+
+      if (cleanFacebookAppId && cleanFacebookAppId !== '••••••••••••••••') updates.push({ key_name: 'facebook_app_id', api_key: cleanFacebookAppId });
+      if (cleanFacebookAppSecret && cleanFacebookAppSecret !== '••••••••••••••••') updates.push({ key_name: 'facebook_app_secret', api_key: cleanFacebookAppSecret });
+      if (cleanYouTubeClientId && cleanYouTubeClientId !== '••••••••••••••••') updates.push({ key_name: 'youtube_client_id', api_key: cleanYouTubeClientId });
+      if (cleanYouTubeClientSecret && cleanYouTubeClientSecret !== '••••••••••••••••') updates.push({ key_name: 'youtube_client_secret', api_key: cleanYouTubeClientSecret });
+
+      if (updates.length === 0) {
+        toast({ title: 'No new OAuth credentials to save' });
+        return;
+      }
+
+      const rows = updates.map((item) => ({ user_id: user.id, key_name: item.key_name, api_key: item.api_key }));
+      const { error } = await supabase.from('user_api_keys').upsert(rows, { onConflict: 'user_id,key_name' });
+      if (error) throw error;
+
+      toast({ title: 'OAuth credentials saved' });
+      await fetchOAuthKeys();
+    } catch {
+      toast({ title: 'Failed to save OAuth credentials', variant: 'destructive' });
+    } finally {
+      setSavingOAuthKeys(false);
+    }
+  };
+
+  const handleUploadWatermark = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user) return;
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const isImage = file.type.startsWith('image/');
+    if (!isImage) {
+      toast({ title: 'Please upload an image file', variant: 'destructive' });
+      return;
+    }
+
+    setUploadingWatermark(true);
+    try {
+      const extension = file.name.split('.').pop() || 'png';
+      const filePath = `${user.id}/watermark.${extension}`;
+      const { error: uploadError } = await supabase.storage.from('user-watermarks').upload(filePath, file, { upsert: true, contentType: file.type });
+      if (uploadError) throw uploadError;
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ watermark_image_path: filePath })
+        .eq('user_id', user.id);
+      if (profileError) throw profileError;
+
+      toast({ title: 'Watermark uploaded successfully' });
+      await fetchWatermarkPath();
+    } catch {
+      toast({ title: 'Failed to upload watermark', variant: 'destructive' });
+    } finally {
+      setUploadingWatermark(false);
+      event.target.value = '';
+    }
+  };
+
+  const handleRemoveWatermark = async () => {
+    if (!user || !watermarkPath) return;
+    setUploadingWatermark(true);
+    try {
+      await supabase.storage.from('user-watermarks').remove([watermarkPath]);
+      const { error } = await supabase
+        .from('profiles')
+        .update({ watermark_image_path: null })
+        .eq('user_id', user.id);
+      if (error) throw error;
+      toast({ title: 'Watermark removed' });
+      await fetchWatermarkPath();
+    } catch {
+      toast({ title: 'Failed to remove watermark', variant: 'destructive' });
+    } finally {
+      setUploadingWatermark(false);
+    }
+  };
+
   const handleLogout = async () => {
     await signOut();
     navigate('/auth');
@@ -151,10 +281,11 @@ export default function Settings() {
       setNewPassword('');
       setConfirmPassword('');
       toast({ title: 'Password updated successfully' });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Please try again';
       toast({ 
         title: 'Failed to update password', 
-        description: err.message || 'Please try again',
+        description: errorMessage,
         variant: 'destructive' 
       });
     } finally {
@@ -272,6 +403,84 @@ export default function Settings() {
                 </p>
               )}
             </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-ios-subhead text-muted-foreground uppercase tracking-wide px-1">
+            OAuth App Credentials
+          </h2>
+          <div className="ios-section p-4 space-y-4">
+            <p className="text-ios-caption text-muted-foreground">
+              These credentials are used by Facebook/Instagram and YouTube Edge Functions for your account only.
+            </p>
+            <IOSInput
+              placeholder="Facebook App ID"
+              value={facebookAppId}
+              onChange={(e) => setFacebookAppId(e.target.value)}
+              onFocus={() => facebookAppId === '••••••••••••••••' && setFacebookAppId('')}
+            />
+            <IOSInput
+              type="password"
+              placeholder="Facebook App Secret"
+              value={facebookAppSecret}
+              onChange={(e) => setFacebookAppSecret(e.target.value)}
+              onFocus={() => facebookAppSecret === '••••••••••••••••' && setFacebookAppSecret('')}
+            />
+            <IOSInput
+              placeholder="YouTube OAuth Client ID"
+              value={youtubeClientId}
+              onChange={(e) => setYouTubeClientId(e.target.value)}
+              onFocus={() => youtubeClientId === '••••••••••••••••' && setYouTubeClientId('')}
+            />
+            <IOSInput
+              type="password"
+              placeholder="YouTube OAuth Client Secret"
+              value={youtubeClientSecret}
+              onChange={(e) => setYouTubeClientSecret(e.target.value)}
+              onFocus={() => youtubeClientSecret === '••••••••••••••••' && setYouTubeClientSecret('')}
+            />
+            <IOSButton onClick={handleSaveOAuthKeys} disabled={savingOAuthKeys}>
+              {savingOAuthKeys ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save OAuth Credentials'}
+            </IOSButton>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-ios-subhead text-muted-foreground uppercase tracking-wide px-1">
+            Watermark Image
+          </h2>
+          <div className="ios-section p-4 space-y-4">
+            <p className="text-ios-caption text-muted-foreground">
+              Upload your watermark once. Auto-poster will load it from your profile during runtime.
+            </p>
+
+            {watermarkPublicUrl ? (
+              <div className="space-y-3">
+                <img src={watermarkPublicUrl} alt="Watermark preview" className="w-full max-w-[220px] rounded-lg border border-border" />
+                <div className="flex gap-3">
+                  <label className="inline-flex">
+                    <input type="file" accept="image/*" className="hidden" onChange={handleUploadWatermark} />
+                    <IOSButton size="md" variant="secondary" disabled={uploadingWatermark}>
+                      {uploadingWatermark ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4 mr-1" />}
+                      Replace
+                    </IOSButton>
+                  </label>
+                  <IOSButton size="md" variant="secondary" onClick={handleRemoveWatermark} disabled={uploadingWatermark}>
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Remove
+                  </IOSButton>
+                </div>
+              </div>
+            ) : (
+              <label className="inline-flex">
+                <input type="file" accept="image/*" className="hidden" onChange={handleUploadWatermark} />
+                <IOSButton size="md" disabled={uploadingWatermark}>
+                  {uploadingWatermark ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4 mr-1" />}
+                  Upload Watermark
+                </IOSButton>
+              </label>
+            )}
           </div>
         </section>
 

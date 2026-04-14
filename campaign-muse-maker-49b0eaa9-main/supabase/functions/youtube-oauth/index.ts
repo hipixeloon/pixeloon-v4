@@ -14,8 +14,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const googleClientId = Deno.env.get('GOOGLE_CLIENT_ID')!
-    const googleClientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET')!
 
     const url = new URL(req.url)
     let action = url.searchParams.get('action')
@@ -41,7 +39,32 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+    const getUserApiKey = async (uid: string, keyName: string): Promise<string | null> => {
+      const { data } = await supabase
+        .from('user_api_keys')
+        .select('api_key')
+        .eq('user_id', uid)
+        .eq('key_name', keyName)
+        .maybeSingle()
+      return data?.api_key || null
+    }
+
     if (action === 'get-auth-url') {
+      if (!userId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing user context' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const googleClientId = await getUserApiKey(userId, 'youtube_client_id')
+      if (!googleClientId) {
+        return new Response(
+          JSON.stringify({ error: 'YouTube OAuth Client ID is missing. Add it in Settings.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
       const redirectUri = (parsedBody?.redirect_uri as string) || 
                           url.searchParams.get('redirect_uri') || 
                           `${url.origin}/youtube-callback`
@@ -74,6 +97,15 @@ serve(async (req) => {
       if (!code || !redirectUri || !userId) {
         return new Response(
           JSON.stringify({ error: 'Missing required parameters' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const googleClientId = await getUserApiKey(userId, 'youtube_client_id')
+      const googleClientSecret = await getUserApiKey(userId, 'youtube_client_secret')
+      if (!googleClientId || !googleClientSecret) {
+        return new Response(
+          JSON.stringify({ error: 'YouTube OAuth credentials are missing. Add Client ID and Client Secret in Settings.' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
@@ -147,11 +179,20 @@ serve(async (req) => {
 
     if (action === 'refresh-token') {
       const body = parsedBody ?? await req.json()
-      const { refreshToken } = body
+      const { refreshToken, userId } = body
 
-      if (!refreshToken) {
+      if (!refreshToken || !userId) {
         return new Response(
-          JSON.stringify({ error: 'Missing refreshToken' }),
+          JSON.stringify({ error: 'Missing refreshToken or userId' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const googleClientId = await getUserApiKey(userId, 'youtube_client_id')
+      const googleClientSecret = await getUserApiKey(userId, 'youtube_client_secret')
+      if (!googleClientId || !googleClientSecret) {
+        return new Response(
+          JSON.stringify({ error: 'YouTube OAuth credentials are missing. Add Client ID and Client Secret in Settings.' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }

@@ -198,8 +198,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const facebookAppId = Deno.env.get('FACEBOOK_APP_ID')!
-    const facebookAppSecret = Deno.env.get('FACEBOOK_APP_SECRET')!
 
     const url = new URL(req.url)
     let action = url.searchParams.get('action')
@@ -226,7 +224,32 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+    const getUserApiKey = async (uid: string, keyName: string): Promise<string | null> => {
+      const { data } = await supabase
+        .from('user_api_keys')
+        .select('api_key')
+        .eq('user_id', uid)
+        .eq('key_name', keyName)
+        .maybeSingle()
+      return data?.api_key || null
+    }
+
     if (action === 'get-auth-url') {
+      if (!userId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing user context' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const facebookAppId = await getUserApiKey(userId, 'facebook_app_id')
+      if (!facebookAppId) {
+        return new Response(
+          JSON.stringify({ error: 'Facebook App ID is missing. Add it in Settings.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
       // Get redirect URI from body, query params or use default
       const redirectUri = (parsedBody?.redirect_uri as string) || 
                           url.searchParams.get('redirect_uri') || 
@@ -255,6 +278,15 @@ Deno.serve(async (req) => {
       if (!code || !redirectUri || !userId) {
         return new Response(
           JSON.stringify({ error: 'Missing required parameters' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const facebookAppId = await getUserApiKey(userId, 'facebook_app_id')
+      const facebookAppSecret = await getUserApiKey(userId, 'facebook_app_secret')
+      if (!facebookAppId || !facebookAppSecret) {
+        return new Response(
+          JSON.stringify({ error: 'Facebook App credentials are missing. Add App ID and App Secret in Settings.' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }

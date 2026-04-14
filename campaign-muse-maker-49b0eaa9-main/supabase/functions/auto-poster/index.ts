@@ -98,14 +98,7 @@ async function createSignedJwt(email: string, privateKey: string): Promise<strin
   return `${unsignedToken}.${base64UrlEncode(new Uint8Array(signature))}`
 }
 
-async function getGoogleAccessToken(): Promise<string> {
-  const email = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_EMAIL')
-  const privateKey = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY')
-  
-  if (!email || !privateKey) {
-    throw new Error('Google service account credentials not configured')
-  }
-  
+async function getGoogleAccessToken(email: string, privateKey: string): Promise<string> {
   const jwt = await createSignedJwt(email, privateKey)
   
   const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -327,12 +320,9 @@ function getAspectRatioString(width: number, height: number): string {
   return `${ratio.toFixed(2)} (${ratio < 1 ? 'vertical' : 'horizontal'})`
 }
 
-async function downloadVideoWithMetadata(driveUrl: string): Promise<VideoDownloadResult> {
+async function downloadVideoWithMetadata(driveUrl: string, accessToken: string): Promise<VideoDownloadResult> {
   const fileId = getFileId(driveUrl)
   if (!fileId) throw new Error('Invalid Google Drive URL format')
-  
-  console.log('Getting Google access token...')
-  const accessToken = await getGoogleAccessToken()
   
   // Get video metadata first
   console.log('Fetching video metadata...')
@@ -876,7 +866,7 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
 
 // ============ Main Handler ============
 
-async function refreshYouTubeTokenIfNeeded(supabase: any, ytChannel: any): Promise<string> {
+async function refreshYouTubeTokenIfNeeded(supabase: any, ytChannel: any, userId: string): Promise<string> {
   const now = new Date()
   const expiresAt = new Date(ytChannel.token_expires_at)
   
@@ -886,7 +876,7 @@ async function refreshYouTubeTokenIfNeeded(supabase: any, ytChannel: any): Promi
     
     // Call our own youtube-oauth function to refresh
     const { data: refreshResult, error: refreshError } = await supabase.functions.invoke('youtube-oauth', {
-      body: { action: 'refresh-token', refreshToken: ytChannel.refresh_token }
+      body: { action: 'refresh-token', refreshToken: ytChannel.refresh_token, userId }
     })
     
     if (refreshError || !refreshResult?.access_token) {
@@ -967,6 +957,47 @@ serve(async (req) => {
 
     console.log(`Found ${pendingPosts.length} posts to process`)
     const results = []
+    const userApiKeyCache = new Map<string, Map<string, string>>()
+    const userWatermarkCache = new Map<string, string | null>()
+
+    const getUserApiKeys = async (userId: string): Promise<Map<string, string>> => {
+      const cached = userApiKeyCache.get(userId)
+      if (cached) return cached
+
+      const { data, error } = await supabase
+        .from('user_api_keys')
+        .select('key_name, api_key')
+        .eq('user_id', userId)
+        .in('key_name', ['gemini', 'google_service_account_email', 'google_service_account_private_key'])
+
+      if (error) throw error
+      const map = new Map<string, string>((data || []).map((row: { key_name: string; api_key: string }) => [row.key_name, row.api_key]))
+      userApiKeyCache.set(userId, map)
+      return map
+    }
+
+    const getUserWatermarkUrl = async (userId: string): Promise<string | null> => {
+      if (userWatermarkCache.has(userId)) {
+        return userWatermarkCache.get(userId) ?? null
+      }
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('watermark_image_path')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      const path = data?.watermark_image_path || null
+      if (!path) {
+        userWatermarkCache.set(userId, null)
+        return null
+      }
+
+      const { data: publicUrlData } = supabase.storage.from('user-watermarks').getPublicUrl(path)
+      const watermarkUrl = publicUrlData.publicUrl || null
+      userWatermarkCache.set(userId, watermarkUrl)
+      return watermarkUrl
+    }
 
     for (const post of pendingPosts as ScheduledPost[]) {
       console.log(`\n--- Processing post ${post.id} ---`)
@@ -984,33 +1015,38 @@ serve(async (req) => {
         let caption = post.caption || ''
         let hashtags = post.hashtags || []
 
-        // Download video with metadata (duration, resolution) first - we need it for AI caption
-        console.log('Downloading video:', post.video_url)
-        let videoResult = await downloadVideoWithMetadata(post.video_url)
-
         // Fetch campaign branding info
         const { data: campaign } = await supabase.from('campaigns').select('*').eq('id', post.campaign_id).single()
+        const campaignOwnerId = campaign?.user_id as string | undefined
+        if (!campaignOwnerId) {
+          throw new Error('Campaign owner could not be resolved')
+        }
+
+        const userKeys = await getUserApiKeys(campaignOwnerId)
+        const serviceAccountEmail = userKeys.get('google_service_account_email')
+        const serviceAccountPrivateKey = userKeys.get('google_service_account_private_key')
+        if (!serviceAccountEmail || !serviceAccountPrivateKey) {
+          throw new Error('Google Drive service account credentials are missing in Settings API keys')
+        }
+
+        const googleAccessToken = await getGoogleAccessToken(serviceAccountEmail, serviceAccountPrivateKey)
+
+        // Download video with metadata (duration, resolution) first - we need it for AI caption
+        console.log('Downloading video:', post.video_url)
+        let videoResult = await downloadVideoWithMetadata(post.video_url, googleAccessToken)
 
         // Apply visual branding (logo) if enabled
-        if (campaign?.branding_logo_url) {
+        const profileWatermarkUrl = await getUserWatermarkUrl(campaignOwnerId)
+        const brandingLogoUrl = campaign?.branding_logo_url || profileWatermarkUrl
+        if (brandingLogoUrl) {
           const logoOpacity = typeof campaign.logo_opacity === 'number' ? campaign.logo_opacity : 80
-          const watermarkedBlob = await applyWatermark(videoResult.blob, campaign.branding_logo_url, logoOpacity)
+          const watermarkedBlob = await applyWatermark(videoResult.blob, brandingLogoUrl, logoOpacity)
           videoResult.blob = watermarkedBlob
         }
 
         // Generate AI caption using video thumbnail and metadata
         if (post.needs_ai_caption || !caption) {
-          // Fetch user's Gemini API key if available
-          let userGeminiKey: string | null = null
-          if (campaign?.user_id) {
-            const { data: apiKeyData } = await supabase
-              .from('user_api_keys')
-              .select('api_key')
-              .eq('user_id', campaign.user_id)
-              .eq('key_name', 'gemini')
-              .single()
-            userGeminiKey = apiKeyData?.api_key || null
-          }
+          const userGeminiKey = userKeys.get('gemini') || null
           
           // Get caption settings from campaign
           const captionLength = (campaign?.caption_length as 'short' | 'medium' | 'long') || 'medium'
@@ -1022,8 +1058,7 @@ serve(async (req) => {
           let thumbnail: string | null = null
           if (fileId) {
             try {
-              const accessToken = await getGoogleAccessToken()
-              thumbnail = await getVideoThumbnailBase64(fileId, accessToken)
+              thumbnail = await getVideoThumbnailBase64(fileId, googleAccessToken)
             } catch (err) {
               console.log('Could not get thumbnail for AI:', err)
             }
@@ -1179,7 +1214,7 @@ serve(async (req) => {
              allSuccess = false; errors.push("YT Channel not found.")
            } else {
               try {
-                const activeToken = await refreshYouTubeTokenIfNeeded(supabase, ytChannel)
+                const activeToken = await refreshYouTubeTokenIfNeeded(supabase, ytChannel, campaignOwnerId)
                 console.log(`Uploading to YouTube: ${ytChannel.channel_name} (${isYouTubeShort ? 'Short' : 'Long Video'})...`)
                 const res = await uploadVideoToYouTube(ytChannel.channel_id, activeToken, videoResult.blob, campaign?.title || 'Video', fullCaption, hashtags, isYouTubeShort)
                 if ('error' in res) {

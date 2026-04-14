@@ -69,14 +69,7 @@ async function createSignedJwt(email: string, privateKey: string): Promise<strin
   return `${unsignedToken}.${base64UrlEncode(new Uint8Array(signature))}`
 }
 
-async function getGoogleAccessToken(): Promise<string> {
-  const email = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_EMAIL')
-  const privateKey = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY')
-  
-  if (!email || !privateKey) {
-    throw new Error('Google service account credentials not configured')
-  }
-  
+async function getGoogleAccessToken(email: string, privateKey: string): Promise<string> {
   const jwt = await createSignedJwt(email, privateKey)
   
   const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -451,6 +444,17 @@ Deno.serve(async (req) => {
       throw new Error('Campaign not found')
     }
 
+    const { data: ownerApiKeys, error: ownerApiKeyError } = await supabase
+      .from('user_api_keys')
+      .select('key_name, api_key')
+      .eq('user_id', campaign.user_id)
+      .in('key_name', ['google_service_account_email', 'google_service_account_private_key'])
+
+    if (ownerApiKeyError) throw ownerApiKeyError
+    const ownerKeyMap = new Map((ownerApiKeys || []).map((row: { key_name: string; api_key: string }) => [row.key_name, row.api_key]))
+    const ownerServiceEmail = ownerKeyMap.get('google_service_account_email')
+    const ownerServicePrivateKey = ownerKeyMap.get('google_service_account_private_key')
+
     // Get campaign pages
     const { data: campaignPages, error: pagesError } = await supabase
       .from('campaign_pages')
@@ -531,9 +535,12 @@ Deno.serve(async (req) => {
     let videoLinks: string[] = []
     
     if (campaign.drive_folder_id) {
+      if (!ownerServiceEmail || !ownerServicePrivateKey) {
+        throw new Error('Google service account credentials are missing in Settings API keys')
+      }
       // Fetch videos from Google Drive folder
       console.log('Fetching videos from folder:', campaign.drive_folder_id)
-      const accessToken = await getGoogleAccessToken()
+      const accessToken = await getGoogleAccessToken(ownerServiceEmail, ownerServicePrivateKey)
       videoLinks = await getVideosFromFolder(campaign.drive_folder_id, accessToken)
       
       if (videoLinks.length === 0) {
@@ -564,7 +571,9 @@ Deno.serve(async (req) => {
     let qualitySkipped = 0
     if (skipLowQuality && newVideoLinks.length > 0) {
       console.log('Checking video quality (skipLowQuality enabled)...')
-      const accessToken = campaign.drive_folder_id ? await getGoogleAccessToken() : null
+      const accessToken = campaign.drive_folder_id && ownerServiceEmail && ownerServicePrivateKey
+        ? await getGoogleAccessToken(ownerServiceEmail, ownerServicePrivateKey)
+        : null
       
       if (accessToken) {
         const qualityChecks = await Promise.all(

@@ -527,6 +527,7 @@ export type Database = {
           subscription_expires_at: string | null
           updated_at: string
           user_id: string
+          watermark_image_path: string | null
           youtube_enabled: boolean | null
         }
         Insert: {
@@ -546,6 +547,7 @@ export type Database = {
           subscription_expires_at?: string | null
           updated_at?: string
           user_id: string
+          watermark_image_path?: string | null
           youtube_enabled?: boolean | null
         }
         Update: {
@@ -565,6 +567,7 @@ export type Database = {
           subscription_expires_at?: string | null
           updated_at?: string
           user_id?: string
+          watermark_image_path?: string | null
           youtube_enabled?: boolean | null
         }
         Relationships: []

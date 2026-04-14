@@ -38,8 +38,8 @@ serve(async (req) => {
       }
     }
 
-    // Try to get user-specific Gemini key
-    let GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY"); // System fallback
+    // Require user-specific Gemini key
+    let GEMINI_API_KEY: string | null = null;
     
     if (userId) {
       const { data: keyData } = await supabase
