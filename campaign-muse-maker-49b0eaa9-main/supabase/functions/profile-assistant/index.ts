@@ -8,6 +8,18 @@ const corsHeaders = {
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
+interface GeminiProfileResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        functionCall?: {
+          args?: unknown
+        }
+      }>
+    }
+  }>
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -115,9 +127,9 @@ Return ONLY a valid JSON object matching the function schema.`;
       throw new Error(`Gemini API error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as GeminiProfileResponse;
     const candidate = data.candidates?.[0];
-    const functionCall = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
+    const functionCall = candidate?.content?.parts?.find((p) => p.functionCall)?.functionCall;
     
     if (functionCall?.args) {
       return new Response(

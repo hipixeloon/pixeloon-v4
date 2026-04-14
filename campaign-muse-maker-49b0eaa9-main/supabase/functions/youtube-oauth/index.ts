@@ -6,6 +6,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+type OAuthActionBody = {
+  action?: string
+  userId?: string
+  redirect_uri?: string
+  code?: string
+  redirectUri?: string
+  refreshToken?: string
+}
+
+type YouTubeChannelItem = {
+  id: string
+  snippet: {
+    title: string
+    thumbnails?: {
+      default?: {
+        url?: string
+      }
+    }
+  }
+}
+
+type ExistingChannel = {
+  channel_id: string
+  refresh_token: string | null
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -18,12 +44,14 @@ serve(async (req) => {
     const url = new URL(req.url)
     let action = url.searchParams.get('action')
 
-    let parsedBody: any = null
+    let parsedBody: OAuthActionBody | null = null
     if (req.method === 'POST') {
       try {
-        parsedBody = await req.json()
+        parsedBody = await req.json() as OAuthActionBody
         if (!action) action = parsedBody?.action
-      } catch { }
+      } catch (_error) {
+        parsedBody = null
+      }
     }
 
     // Try to get userId from body or Authorization header (Supabase JWT)
@@ -144,8 +172,8 @@ serve(async (req) => {
         .select('channel_id, refresh_token')
         .eq('user_id', userId)
 
-      const channelsParams = (ytData.items || []).map((item: any) => {
-        const existing = existingChannels?.find((ec: any) => ec.channel_id === item.id)
+      const channelsParams = (ytData.items || [] as YouTubeChannelItem[]).map((item) => {
+        const existing = existingChannels?.find((ec: ExistingChannel) => ec.channel_id === item.id)
         return {
           user_id: userId,
           channel_id: item.id,

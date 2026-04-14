@@ -21,7 +21,7 @@ function textToBase64Url(text: string): string {
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
-  let processed = pem
+  const processed = pem
     .replace(/\\\\n/g, '\n')
     .replace(/\\n/g, '\n')
   
@@ -250,9 +250,24 @@ function extractFileId(url: string): string | null {
 }
 
 // Batch insert helper to bypass Supabase row limits
+type ScheduledPostInsert = {
+  campaign_id: string
+  facebook_page_id?: string
+  instagram_account_id?: string
+  youtube_channel_id?: string
+  platform: 'facebook' | 'instagram' | 'youtube'
+  platforms: { facebook: boolean; instagram: boolean; youtube: boolean }
+  video_url: string
+  caption: string | null
+  hashtags: string[]
+  scheduled_time: string
+  status: 'pending'
+  needs_ai_caption: boolean
+}
+
 async function batchInsertPosts(
-  supabase: any,
-  posts: any[],
+  supabase: ReturnType<typeof createClient>,
+  posts: ScheduledPostInsert[],
   batchSize: number = 500
 ): Promise<void> {
   console.log(`Batch inserting ${posts.length} posts in chunks of ${batchSize}`)
@@ -504,7 +519,7 @@ Deno.serve(async (req) => {
 
     // Get ALL existing scheduled posts for this campaign to prevent duplicates
     // Fetch in batches since there could be thousands
-    let existingVideoUrls: Set<string> = new Set()
+    const existingVideoUrls: Set<string> = new Set()
     let hasMore = true
     let offset = 0
     const batchSize = 1000
@@ -521,7 +536,7 @@ Deno.serve(async (req) => {
       if (existingError) throw existingError
       
       if (existingPosts && existingPosts.length > 0) {
-        existingPosts.forEach(p => existingVideoUrls.add(p.video_url))
+        existingPosts.forEach((p: { video_url: string }) => existingVideoUrls.add(p.video_url))
         offset += batchSize
         hasMore = existingPosts.length === batchSize
       } else {
@@ -660,7 +675,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const scheduledPosts: any[] = []
+    const scheduledPosts: ScheduledPostInsert[] = []
     const isAIEnabled = campaign.template_type === 'ai'
     const postsPerDay = postTimes.length
 

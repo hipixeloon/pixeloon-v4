@@ -25,13 +25,6 @@ interface ScheduledPost {
   platforms: { facebook?: boolean; instagram?: boolean; youtube?: boolean } | null
 }
 
-interface FacebookPage {
-  id: string
-  page_id: string
-  page_name: string
-  access_token: string
-}
-
 // ============ Google Drive API Authentication ============
 
 function base64UrlEncode(data: Uint8Array): string {
@@ -49,7 +42,7 @@ function textToBase64Url(text: string): string {
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   // Handle multiple formats: raw PEM, JSON-escaped \n, double-escaped \\n
-  let processed = pem
+  const processed = pem
     .replace(/\\\\n/g, '\n')
     .replace(/\\n/g, '\n')
   
@@ -175,6 +168,63 @@ interface VideoMetadata {
   durationMillis?: number
   width?: number
   height?: number
+}
+
+interface BrandingLinesConfig {
+  enabled?: boolean
+  frequency?: string
+  interval?: number
+  text?: string
+}
+
+interface AffiliateLinksConfig {
+  enabled?: boolean
+  frequency?: string
+  interval?: number
+  links?: string[]
+}
+
+interface GeminiFunctionArgs {
+  hook?: string
+  body?: string
+  cta?: string
+  hashtags?: string[]
+  detected_content?: string
+  language_used?: string
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string
+        functionCall?: {
+          args?: GeminiFunctionArgs
+        }
+      }>
+    }
+  }>
+}
+
+interface YouTubeChannelRecord {
+  id: string
+  channel_name: string
+  refresh_token: string
+  token_expires_at: string
+  access_token: string
+}
+
+interface PostUpdatePayload {
+  actual_post_time: string
+  caption: string
+  hashtags: string[]
+  post_type: 'reel' | 'video'
+  facebook_post_id?: string
+  instagram_media_id?: string
+  youtube_video_id?: string
+  permalink_url?: string | null
+  status?: 'failed' | 'posted'
+  error_message?: string
 }
 
 async function getVideoMetadata(fileId: string, accessToken: string): Promise<VideoMetadata> {
@@ -695,8 +745,8 @@ async function generateVideoAwareCaption(
   hashtagCount: number = 8,
   targetingCountry: string | null = null,
   targetingTone: string | null = null,
-  brandingLines: any | null = null,
-  affiliateLinks: any | null = null
+  brandingLines: BrandingLinesConfig | null = null,
+  affiliateLinks: AffiliateLinksConfig | null = null
 ): Promise<{ caption: string; hashtags: string[] }> {
   // Only use user's API key from database - no system fallback
   if (!userGeminiKey) {
@@ -754,7 +804,11 @@ CAPTION RULES:
 
 Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
 
-  const parts: any[] = [{ text: `Analyze this video thumbnail and create caption #${postIndex + 1}. Write a ${captionLength} ${randomTone} caption in ENGLISH or HINGLISH only (based on video vibe). Generate EXACTLY ${hashtagCount} hashtags related to the VIDEO CONTENT shown.` }]
+  const parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = [
+    {
+      text: `Analyze this video thumbnail and create caption #${postIndex + 1}. Write a ${captionLength} ${randomTone} caption in ENGLISH or HINGLISH only (based on video vibe). Generate EXACTLY ${hashtagCount} hashtags related to the VIDEO CONTENT shown.`
+    }
+  ]
   
   if (thumbnail) {
     parts.unshift({ inline_data: { mime_type: 'image/jpeg', data: thumbnail } })
@@ -800,8 +854,8 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
       throw new Error(`Gemini API error: ${response.status}`)
     }
 
-    const data = await response.json()
-    const functionCall = data.candidates?.[0]?.content?.parts?.find((p: any) => p.functionCall)?.functionCall
+    const data = await response.json() as GeminiResponse
+    const functionCall = data.candidates?.[0]?.content?.parts?.find((p) => p.functionCall)?.functionCall
     
     let resultCaption = `${categoryName} 🔥`
     let resultHashtags = ['viral', 'trending', 'reels', 'fyp', 'explore', 'foryou', 'content', 'video'].slice(0, hashtagCount)
@@ -810,9 +864,9 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
       console.log('Video content detected:', functionCall.args.detected_content || 'N/A')
       console.log('Language used:', functionCall.args.language_used || 'N/A')
       
-      let hook = functionCall.args.hook || '';
-      let body = functionCall.args.body || `${categoryName} 🔥`;
-      let cta = functionCall.args.cta || '';
+      const hook = functionCall.args.hook || '';
+      const body = functionCall.args.body || `${categoryName} 🔥`;
+      const cta = functionCall.args.cta || '';
       
       resultCaption = (hook ? hook + '\n\n' : '') + body + (cta ? '\n\n' + cta : '');
       
@@ -830,7 +884,7 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
       }
       resultHashtags = hashtags;
     } else {
-      const textPart = data.candidates?.[0]?.content?.parts?.find((p: any) => p.text)?.text
+      const textPart = data.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text
       if (textPart) {
         resultCaption = textPart.trim();
       }
@@ -866,7 +920,11 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
 
 // ============ Main Handler ============
 
-async function refreshYouTubeTokenIfNeeded(supabase: any, ytChannel: any, userId: string): Promise<string> {
+async function refreshYouTubeTokenIfNeeded(
+  supabase: ReturnType<typeof createClient>,
+  ytChannel: YouTubeChannelRecord,
+  userId: string
+): Promise<string> {
   const now = new Date()
   const expiresAt = new Date(ytChannel.token_expires_at)
   
@@ -978,7 +1036,7 @@ serve(async (req) => {
 
     const getUserWatermarkUrl = async (userId: string): Promise<string | null> => {
       if (userWatermarkCache.has(userId)) {
-        return userWatermarkCache.get(userId) ?? null
+        return userWatermarkCache.get(userId) || null
       }
 
       const { data } = await supabase
@@ -987,14 +1045,12 @@ serve(async (req) => {
         .eq('user_id', userId)
         .maybeSingle()
 
-      const path = data?.watermark_image_path || null
-      if (!path) {
+      const watermarkUrl = data?.watermark_image_path || null
+      if (!watermarkUrl) {
         userWatermarkCache.set(userId, null)
         return null
       }
 
-      const { data: publicUrlData } = supabase.storage.from('user-watermarks').getPublicUrl(path)
-      const watermarkUrl = publicUrlData.publicUrl || null
       userWatermarkCache.set(userId, watermarkUrl)
       return watermarkUrl
     }
@@ -1003,15 +1059,6 @@ serve(async (req) => {
       console.log(`\n--- Processing post ${post.id} ---`)
       
       try {
-        let fbPage: FacebookPage | null = null
-        if (post.facebook_page_id) {
-          const { data: page, error: pageError } = await supabase
-            .from('facebook_pages')
-            .select('*')
-            .eq('id', post.facebook_page_id)
-            .single()
-          if (!pageError && page) fbPage = page as FacebookPage
-        }
         let caption = post.caption || ''
         let hashtags = post.hashtags || []
 
@@ -1033,7 +1080,7 @@ serve(async (req) => {
 
         // Download video with metadata (duration, resolution) first - we need it for AI caption
         console.log('Downloading video:', post.video_url)
-        let videoResult = await downloadVideoWithMetadata(post.video_url, googleAccessToken)
+        const videoResult = await downloadVideoWithMetadata(post.video_url, googleAccessToken)
 
         // Apply visual branding (logo) if enabled
         const profileWatermarkUrl = await getUserWatermarkUrl(campaignOwnerId)
@@ -1135,8 +1182,8 @@ serve(async (req) => {
         const uploadType = isReel ? 'Reel' : 'Long Video'
         
         let allSuccess = true
-        let errors: string[] = []
-        let postUpdates: any = { 
+        const errors: string[] = []
+        const postUpdates: PostUpdatePayload = { 
           actual_post_time: new Date().toISOString(), 
           caption, 
           hashtags, 

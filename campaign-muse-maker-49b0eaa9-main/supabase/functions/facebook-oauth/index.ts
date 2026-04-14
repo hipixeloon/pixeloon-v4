@@ -128,7 +128,19 @@ async function fetchAllFacebookPagesWithDebug(userAccessToken: string): Promise<
 }
 
 // Helper function to save pages to database
-async function savePagesToDatabase(supabase: any, userId: string, pages: { id: string; name: string; access_token: string; instagram_business_account?: { id: string; username: string } }[]) {
+type OAuthActionBody = {
+  action?: string
+  userId?: string
+  redirect_uri?: string
+  code?: string
+  redirectUri?: string
+}
+
+async function savePagesToDatabase(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  pages: { id: string; name: string; access_token: string; instagram_business_account?: { id: string; username: string } }[]
+) {
   if (pages.length === 0) {
     return { fbPages: [], igPages: [] }
   }
@@ -203,12 +215,14 @@ Deno.serve(async (req) => {
     let action = url.searchParams.get('action')
 
     // Allow calling via supabase.functions.invoke (action in JSON body)
-    let parsedBody: any = null
+    let parsedBody: OAuthActionBody | null = null
     if (req.method === 'POST') {
       try {
-        parsedBody = await req.json()
+        parsedBody = await req.json() as OAuthActionBody
         if (!action) action = parsedBody?.action
-      } catch { }
+      } catch (_error) {
+        parsedBody = null
+      }
     }
 
     // Try to get userId from body or Authorization header (Supabase JWT)

@@ -63,7 +63,7 @@ function textToBase64Url(text: string): string {
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
-  let processed = pem.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
+  const processed = pem.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
   const b64 = processed
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
@@ -151,6 +151,28 @@ interface GeneratedCaption {
   tone: string;
 }
 
+interface GeminiFunctionArgs {
+  hook?: string;
+  body?: string;
+  cta?: string;
+  hashtags?: string[];
+  detected_content?: string;
+  tone?: string;
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+        functionCall?: {
+          args?: GeminiFunctionArgs;
+        };
+      }>;
+    };
+  }>;
+}
+
 async function generateVideoAwareCaption(
   description: string,
   videoInfo: { name: string; duration: number; width: number; height: number; thumbnail: string | null },
@@ -196,7 +218,9 @@ CAPTION RULES:
 
 Random seed for uniqueness: ${Date.now()}-${index}-${Math.random().toString(36).substring(7)}`;
 
-  const parts: any[] = [{ text: `Create caption #${index + 1} of ${total}. Analyze the video thumbnail and metadata to write a ${randomTone} caption in ${randomStyle}.` }];
+  const parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = [
+    { text: `Create caption #${index + 1} of ${total}. Analyze the video thumbnail and metadata to write a ${randomTone} caption in ${randomStyle}.` }
+  ];
   
   // Add thumbnail as inline image if available
   if (videoInfo.thumbnail) {
@@ -253,12 +277,12 @@ Random seed for uniqueness: ${Date.now()}-${index}-${Math.random().toString(36).
     throw new Error(`Gemini API error: ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as GeminiResponse;
   console.log('Gemini response:', JSON.stringify(data).substring(0, 500));
 
   // Extract function call result
   const candidate = data.candidates?.[0];
-  const functionCall = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
+  const functionCall = candidate?.content?.parts?.find((p) => p.functionCall)?.functionCall;
   
   if (functionCall?.args) {
     console.log('Detected content:', functionCall.args.detected_content || 'N/A');
@@ -274,7 +298,7 @@ Random seed for uniqueness: ${Date.now()}-${index}-${Math.random().toString(36).
   }
 
   // Fallback: try to parse text response
-  const textPart = candidate?.content?.parts?.find((p: any) => p.text)?.text;
+  const textPart = candidate?.content?.parts?.find((p) => p.text)?.text;
   if (textPart) {
     return { caption: textPart.substring(0, 200), hashtags: ['viral', 'trending', 'reels'], tone: randomTone };
   }

@@ -4,7 +4,7 @@ import { IOSButton } from '@/components/ui/IOSButton';
 import { IOSInput } from '@/components/ui/IOSInput';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Moon, Sun, Facebook, LogOut, RefreshCw, Bug, CheckCircle, XCircle, Key, Eye, EyeOff, Loader2, Lock, Youtube, Instagram, ExternalLink, Upload, Trash2, Image as ImageIcon } from 'lucide-react';
+import { Moon, Sun, Facebook, LogOut, RefreshCw, Bug, CheckCircle, XCircle, Key, Eye, EyeOff, Loader2, Lock, Youtube, Instagram, ExternalLink } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/hooks/use-toast';
@@ -30,9 +30,8 @@ export default function Settings() {
   const [youtubeClientId, setYouTubeClientId] = useState('');
   const [youtubeClientSecret, setYouTubeClientSecret] = useState('');
   const [savingOAuthKeys, setSavingOAuthKeys] = useState(false);
-  const [watermarkPath, setWatermarkPath] = useState<string | null>(null);
-  const [watermarkPublicUrl, setWatermarkPublicUrl] = useState<string | null>(null);
-  const [uploadingWatermark, setUploadingWatermark] = useState(false);
+  const [watermarkImageUrl, setWatermarkImageUrl] = useState('');
+  const [savingWatermarkUrl, setSavingWatermarkUrl] = useState(false);
   
   // Change password state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -54,16 +53,7 @@ export default function Settings() {
     loading: platformLoading 
   } = usePlatformConnections(user?.id);
 
-  // Fetch existing Gemini API key
-  useEffect(() => {
-    if (user) {
-      fetchGeminiKey();
-      fetchOAuthKeys();
-      fetchWatermarkPath();
-    }
-  }, [user]);
-
-  const fetchGeminiKey = async () => {
+  const fetchGeminiKey = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
       .from('user_api_keys')
@@ -75,10 +65,13 @@ export default function Settings() {
     if (data) {
       setHasGeminiKey(true);
       setGeminiKey('••••••••••••••••');
+    } else {
+      setHasGeminiKey(false);
+      setGeminiKey('');
     }
-  };
+  }, [user]);
 
-  const fetchOAuthKeys = async () => {
+  const fetchOAuthKeys = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
       .from('user_api_keys')
@@ -91,9 +84,9 @@ export default function Settings() {
     setFacebookAppSecret(map.get('facebook_app_secret') ? '••••••••••••••••' : '');
     setYouTubeClientId(map.get('youtube_client_id') ? '••••••••••••••••' : '');
     setYouTubeClientSecret(map.get('youtube_client_secret') ? '••••••••••••••••' : '');
-  };
+  }, [user]);
 
-  const fetchWatermarkPath = async () => {
+  const fetchWatermarkUrl = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
       .from('profiles')
@@ -101,15 +94,17 @@ export default function Settings() {
       .eq('user_id', user.id)
       .single();
 
-    const path = data?.watermark_image_path || null;
-    setWatermarkPath(path);
-    if (path) {
-      const { data: publicUrlData } = supabase.storage.from('user-watermarks').getPublicUrl(path);
-      setWatermarkPublicUrl(publicUrlData.publicUrl);
-    } else {
-      setWatermarkPublicUrl(null);
+    setWatermarkImageUrl(data?.watermark_image_path || '');
+  }, [user]);
+
+  // Fetch existing settings
+  useEffect(() => {
+    if (user) {
+      void fetchGeminiKey();
+      void fetchOAuthKeys();
+      void fetchWatermarkUrl();
     }
-  };
+  }, [user, fetchGeminiKey, fetchOAuthKeys, fetchWatermarkUrl]);
 
   const handleSaveGeminiKey = async () => {
     if (!user || !geminiKey || geminiKey === '••••••••••••••••') return;
@@ -194,56 +189,51 @@ export default function Settings() {
     }
   };
 
-  const handleUploadWatermark = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSaveWatermarkUrl = async () => {
     if (!user) return;
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const isImage = file.type.startsWith('image/');
-    if (!isImage) {
-      toast({ title: 'Please upload an image file', variant: 'destructive' });
+    const cleanUrl = watermarkImageUrl.trim();
+    if (!cleanUrl) {
+      toast({ title: 'Enter a watermark image URL', variant: 'destructive' });
+      return;
+    }
+    try {
+      new URL(cleanUrl);
+    } catch {
+      toast({ title: 'Invalid URL format', variant: 'destructive' });
       return;
     }
 
-    setUploadingWatermark(true);
+    setSavingWatermarkUrl(true);
     try {
-      const extension = file.name.split('.').pop() || 'png';
-      const filePath = `${user.id}/watermark.${extension}`;
-      const { error: uploadError } = await supabase.storage.from('user-watermarks').upload(filePath, file, { upsert: true, contentType: file.type });
-      if (uploadError) throw uploadError;
-
       const { error: profileError } = await supabase
         .from('profiles')
-        .update({ watermark_image_path: filePath })
+        .update({ watermark_image_path: cleanUrl })
         .eq('user_id', user.id);
       if (profileError) throw profileError;
 
-      toast({ title: 'Watermark uploaded successfully' });
-      await fetchWatermarkPath();
+      toast({ title: 'Watermark image URL saved' });
     } catch {
-      toast({ title: 'Failed to upload watermark', variant: 'destructive' });
+      toast({ title: 'Failed to save watermark URL', variant: 'destructive' });
     } finally {
-      setUploadingWatermark(false);
-      event.target.value = '';
+      setSavingWatermarkUrl(false);
     }
   };
 
-  const handleRemoveWatermark = async () => {
-    if (!user || !watermarkPath) return;
-    setUploadingWatermark(true);
+  const handleClearWatermarkUrl = async () => {
+    if (!user) return;
+    setSavingWatermarkUrl(true);
     try {
-      await supabase.storage.from('user-watermarks').remove([watermarkPath]);
       const { error } = await supabase
         .from('profiles')
         .update({ watermark_image_path: null })
         .eq('user_id', user.id);
       if (error) throw error;
-      toast({ title: 'Watermark removed' });
-      await fetchWatermarkPath();
+      setWatermarkImageUrl('');
+      toast({ title: 'Watermark URL cleared' });
     } catch {
-      toast({ title: 'Failed to remove watermark', variant: 'destructive' });
+      toast({ title: 'Failed to clear watermark URL', variant: 'destructive' });
     } finally {
-      setUploadingWatermark(false);
+      setSavingWatermarkUrl(false);
     }
   };
 
@@ -452,34 +442,24 @@ export default function Settings() {
           </h2>
           <div className="ios-section p-4 space-y-4">
             <p className="text-ios-caption text-muted-foreground">
-              Upload your watermark once. Auto-poster will load it from your profile during runtime.
+              Use a direct JPG/PNG image URL (for example Blogger-hosted). Auto-poster will load this URL directly.
             </p>
-
-            {watermarkPublicUrl ? (
-              <div className="space-y-3">
-                <img src={watermarkPublicUrl} alt="Watermark preview" className="w-full max-w-[220px] rounded-lg border border-border" />
-                <div className="flex gap-3">
-                  <label className="inline-flex">
-                    <input type="file" accept="image/*" className="hidden" onChange={handleUploadWatermark} />
-                    <IOSButton size="md" variant="secondary" disabled={uploadingWatermark}>
-                      {uploadingWatermark ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4 mr-1" />}
-                      Replace
-                    </IOSButton>
-                  </label>
-                  <IOSButton size="md" variant="secondary" onClick={handleRemoveWatermark} disabled={uploadingWatermark}>
-                    <Trash2 className="w-4 h-4 mr-1" />
-                    Remove
-                  </IOSButton>
-                </div>
-              </div>
-            ) : (
-              <label className="inline-flex">
-                <input type="file" accept="image/*" className="hidden" onChange={handleUploadWatermark} />
-                <IOSButton size="md" disabled={uploadingWatermark}>
-                  {uploadingWatermark ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4 mr-1" />}
-                  Upload Watermark
-                </IOSButton>
-              </label>
+            <IOSInput
+              type="url"
+              placeholder="https://example.com/watermark.jpg"
+              value={watermarkImageUrl}
+              onChange={(e) => setWatermarkImageUrl(e.target.value)}
+            />
+            <div className="flex gap-3">
+              <IOSButton size="md" onClick={handleSaveWatermarkUrl} disabled={savingWatermarkUrl}>
+                {savingWatermarkUrl ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save URL'}
+              </IOSButton>
+              <IOSButton size="md" variant="secondary" onClick={handleClearWatermarkUrl} disabled={savingWatermarkUrl || !watermarkImageUrl}>
+                Clear
+              </IOSButton>
+            </div>
+            {watermarkImageUrl && (
+              <img src={watermarkImageUrl} alt="Watermark preview" className="w-full max-w-[220px] rounded-lg border border-border" />
             )}
           </div>
         </section>
