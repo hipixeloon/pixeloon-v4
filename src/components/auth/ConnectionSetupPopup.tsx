@@ -16,6 +16,15 @@ interface ConnectionSetupPopupProps {
   hasGeminiKey: boolean;
 }
 
+interface ConnectionItemProps {
+  label: string;
+  icon: React.ReactNode;
+  iconBg: string;
+  isConnected: boolean;
+  onClick: () => void;
+  description: string;
+}
+
 export function ConnectionSetupPopup({
   isOpen,
   onClose,
@@ -104,7 +113,7 @@ export function ConnectionSetupPopup({
   );
 }
 
-function ConnectionItem({ label, icon, iconBg, isConnected, onClick, description }: any) {
+function ConnectionItem({ label, icon, iconBg, isConnected, onClick, description }: ConnectionItemProps) {
   return (
     <button
       onClick={!isConnected ? onClick : undefined}

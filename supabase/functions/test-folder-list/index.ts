@@ -5,6 +5,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+interface DriveShortcutDetails {
+  targetId?: string
+}
+
+interface DriveListFile {
+  id: string
+  name: string
+  mimeType: string
+  size?: string
+  shortcutDetails?: DriveShortcutDetails
+}
+
 // Convert PEM to ArrayBuffer for crypto import
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   // Handle different formats of the private key
@@ -183,7 +195,7 @@ serve(async (req) => {
     console.log(`Found ${listData.files?.length || 0} video files`)
 
     // Resolve shortcuts to get actual video info
-    const files = await Promise.all((listData.files || []).map(async (file: any) => {
+    const files = await Promise.all((listData.files as DriveListFile[] || []).map(async (file) => {
       if (file.mimeType === 'application/vnd.google-apps.shortcut' && file.shortcutDetails?.targetId) {
         // Get the actual file metadata
         const targetUrl = `https://www.googleapis.com/drive/v3/files/${file.shortcutDetails.targetId}?fields=id,name,mimeType,size`

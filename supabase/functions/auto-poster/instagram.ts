@@ -1,5 +1,21 @@
+interface SupabaseStorageClient {
+  from: (bucket: string) => {
+    upload: (
+      path: string,
+      fileBody: Blob,
+      options: { contentType: string; upsert: boolean }
+    ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    getPublicUrl: (path: string) => { data: { publicUrl: string } };
+    remove: (paths: string[]) => Promise<unknown>;
+  };
+}
+
+interface SupabaseClientLike {
+  storage: SupabaseStorageClient;
+}
+
 export async function uploadVideoToInstagram(
-  supabase: any,
+  supabase: SupabaseClientLike,
   igAccountId: string,
   userAccessToken: string,
   videoBlob: Blob,

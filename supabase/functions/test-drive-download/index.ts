@@ -21,7 +21,7 @@ function pemToArrayBuffer(pem: string): ArrayBuffer {
   // 1. Raw PEM with actual newlines
   // 2. JSON-escaped \n characters
   // 3. Double-escaped \\n characters
-  let processed = pem
+  const processed = pem
     .replace(/\\\\n/g, '\n')  // Double-escaped \\n -> newline
     .replace(/\\n/g, '\n')     // JSON-escaped \n -> newline
   

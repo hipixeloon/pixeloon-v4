@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { usePlatformConnections } from '@/hooks/usePlatformConnections';
+import { FacebookPage, usePlatformConnections } from '@/hooks/usePlatformConnections';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
@@ -40,7 +40,7 @@ export default function FacebookCallback() {
           const pages = await handleFacebookCallback(code);
           if (pages && pages.length > 0) {
             setStatus('success');
-            setConnectedPages(pages.map((p: any) => p.page_name));
+            setConnectedPages((pages as FacebookPage[]).map((p) => p.page_name));
             toast({
               title: 'Facebook Connected!',
               description: `Connected ${pages.length} page(s) successfully.`,

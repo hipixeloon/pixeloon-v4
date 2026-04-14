@@ -223,7 +223,7 @@ export default function CampaignDetail() {
         if (postsError) throw postsError;
 
         if (postsData && postsData.length > 0) {
-          allPosts = [...allPosts, ...postsData as any];
+          allPosts = [...allPosts, ...(postsData as ScheduledPost[])];
           offset += batchSize;
           hasMore = postsData.length === batchSize;
         } else {

@@ -30,7 +30,7 @@ function textToBase64Url(text: string): string {
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   // Handle multiple formats: raw PEM, JSON-escaped \n, double-escaped \\n
-  let processed = pem
+  const processed = pem
     .replace(/\\\\n/g, '\n')
     .replace(/\\n/g, '\n')
   

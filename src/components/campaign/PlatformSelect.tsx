@@ -20,6 +20,30 @@ interface PlatformSelectProps {
   loading?: boolean;
 }
 
+interface ConnectPlaceholderProps {
+  platform: string;
+  icon: React.ReactNode;
+  color: string;
+  onClick: () => void;
+  description?: string;
+  loading?: boolean;
+}
+
+interface PlatformListItem {
+  id: string;
+  name: string;
+  sub: string;
+}
+
+interface PlatformListProps {
+  items: PlatformListItem[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  icon: React.ReactNode;
+  color: string;
+  onConnectMore: () => void;
+}
+
 export function PlatformSelect({
   facebookPages,
   instagramAccounts,
@@ -180,7 +204,7 @@ export function PlatformSelect({
   );
 }
 
-function ConnectPlaceholder({ platform, icon, color, onClick, description, loading }: any) {
+function ConnectPlaceholder({ platform, icon, color, onClick, description, loading }: ConnectPlaceholderProps) {
   return (
     <button
       onClick={onClick}
@@ -203,11 +227,11 @@ function ConnectPlaceholder({ platform, icon, color, onClick, description, loadi
   );
 }
 
-function PlatformList({ items, selectedIds, onToggle, icon, color, onConnectMore }: any) {
+function PlatformList({ items, selectedIds, onToggle, icon, color, onConnectMore }: PlatformListProps) {
   return (
     <div className="space-y-2">
       <div className="ios-card overflow-hidden divide-y divide-border/50">
-        {items.map((item: any) => {
+        {items.map((item) => {
           const isSelected = selectedIds.includes(item.id);
           return (
             <button

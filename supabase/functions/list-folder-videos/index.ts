@@ -21,7 +21,7 @@ function textToBase64Url(text: string): string {
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
-  let processed = pem.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n')
+  const processed = pem.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n')
   const b64 = processed
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
