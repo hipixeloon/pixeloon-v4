@@ -40,14 +40,7 @@ export default function Dashboard() {
     connectYouTube,
   } = usePlatformConnections(user?.id);
 
-  useEffect(() => {
-    if (user) {
-      fetchCampaigns();
-      checkGeminiKey();
-    }
-  }, [user]);
-
-  const checkGeminiKey = async () => {
+  const checkGeminiKey = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
       .from('user_api_keys')
@@ -56,11 +49,18 @@ export default function Dashboard() {
       .eq('key_name', 'gemini')
       .maybeSingle();
     setHasGeminiKey(!!data);
-  };
+  }, [user]);
 
   const fetchCampaigns = async () => {
     // ... lines omitted ...
   };
+
+  useEffect(() => {
+    if (user) {
+      fetchCampaigns();
+      checkGeminiKey();
+    }
+  }, [user, checkGeminiKey]);
 
   useEffect(() => {
     if (!loading && !connectionsLoading && user) {
@@ -82,7 +82,7 @@ export default function Dashboard() {
 
   const handleRefresh = useCallback(async () => {
     await fetchCampaigns();
-  }, [user]);
+  }, []);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {

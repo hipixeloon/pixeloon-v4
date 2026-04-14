@@ -67,22 +67,7 @@ export function UserActivityDialog({ user, open, onOpenChange }: UserActivityDia
   const [selectedPost, setSelectedPost] = useState<ScheduledPost | null>(null);
   const [campaignIds, setCampaignIds] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (user && open) {
-      setCurrentPage(1);
-      setStatusFilter('all');
-      setSelectedPost(null);
-      fetchUserActivity();
-    }
-  }, [user, open]);
-
-  useEffect(() => {
-    if (campaignIds.length > 0 && open) {
-      fetchPosts();
-    }
-  }, [currentPage, statusFilter, campaignIds]);
-
-  const fetchUserActivity = async () => {
+  const fetchUserActivity = useCallback(async () => {
     if (!user) return;
 
     setLoading(true);
@@ -127,7 +112,7 @@ export function UserActivityDialog({ user, open, onOpenChange }: UserActivityDia
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   const fetchPosts = useCallback(async () => {
     if (campaignIds.length === 0) return;
@@ -166,6 +151,21 @@ export function UserActivityDialog({ user, open, onOpenChange }: UserActivityDia
       setPostsLoading(false);
     }
   }, [campaignIds, currentPage, statusFilter]);
+
+  useEffect(() => {
+    if (user && open) {
+      setCurrentPage(1);
+      setStatusFilter('all');
+      setSelectedPost(null);
+      fetchUserActivity();
+    }
+  }, [user, open, fetchUserActivity]);
+
+  useEffect(() => {
+    if (campaignIds.length > 0 && open) {
+      fetchPosts();
+    }
+  }, [currentPage, statusFilter, campaignIds, open, fetchPosts]);
 
   const totalPages = Math.ceil(totalPosts / POSTS_PER_PAGE);
 

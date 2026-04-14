@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, CheckCircle2, XCircle, RefreshCw, Trash2, Loader2, Play, Zap, ExternalLink, Folder, FileVideo, Video, Filter, Calendar, ChevronLeft, ChevronRight, Settings2, Check, X, Pause, PlayCircle, BarChart3, Film, Globe } from 'lucide-react';
 import { format, addDays } from 'date-fns';
@@ -162,19 +162,13 @@ export default function CampaignDetail() {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (user && id) {
-      fetchCampaignData();
-    }
-  }, [user, id]);
-
   // Reset page when tab or filters change
   useEffect(() => {
     setCurrentPage(1);
     setSelectedPosts(new Set());
   }, [activeTab, dateFrom, dateTo]);
 
-  const fetchCampaignData = async () => {
+  const fetchCampaignData = useCallback(async () => {
     try {
       // Fetch campaign
       const { data: campaignData, error: campaignError } = await supabase
@@ -280,7 +274,13 @@ export default function CampaignDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, navigate, user?.id]);
+
+  useEffect(() => {
+    if (user && id) {
+      fetchCampaignData();
+    }
+  }, [user, id, fetchCampaignData]);
 
   // Filter posts by date and status
   const filteredPosts = useMemo(() => {
