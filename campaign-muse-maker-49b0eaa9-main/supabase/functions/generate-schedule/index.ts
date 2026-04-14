@@ -714,7 +714,7 @@ Deno.serve(async (req) => {
         const actualScheduledTime = applyRandomOffset(
           scheduledDate,
           postTime.randomize,
-          postTime.random_range_minutes ?? 0
+          Math.max(0, postTime.random_range_minutes ?? 0)
         )
 
         if (actualScheduledTime <= nowUtc) {
@@ -827,8 +827,8 @@ Deno.serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('Schedule generator error:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Schedule generator error')
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
