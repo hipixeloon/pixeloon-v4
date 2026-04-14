@@ -77,6 +77,9 @@ interface FolderInfo {
   videos: Array<{ id: string; name: string; size: number }>;
 }
 
+type VideoOrderMode = 'sequential' | 'random';
+type FolderVideo = { id: string; name: string; size: number };
+
 export default function NewCampaign() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -129,6 +132,10 @@ export default function NewCampaign() {
     }
   });
   const [startFromTomorrow, setStartFromTomorrow] = useState(true);
+  const [videoOrderMode, setVideoOrderMode] = useState<VideoOrderMode>('sequential');
+  const [startVideoIndex, setStartVideoIndex] = useState(0);
+  const [sequenceStep, setSequenceStep] = useState(1);
+  const [avoidSameTimeVideoCollisions, setAvoidSameTimeVideoCollisions] = useState(true);
 
   const { 
     fbPages: facebookPages, 
@@ -172,11 +179,23 @@ export default function NewCampaign() {
         return;
       }
 
+      const videos: FolderVideo[] = Array.isArray(data.videos)
+        ? data.videos
+            .filter((v: unknown): v is FolderVideo =>
+              typeof v === 'object' &&
+              v !== null &&
+              typeof (v as FolderVideo).id === 'string' &&
+              typeof (v as FolderVideo).name === 'string' &&
+              typeof (v as FolderVideo).size === 'number'
+            )
+            .map((v) => ({ id: v.id, name: v.name, size: v.size }))
+        : [];
+
       setFolderInfo({
         folderId: data.folderId,
         folderName: data.folderName,
         videoCount: data.totalCount,
-        videos: data.videos.map((v: any) => ({ id: v.id, name: v.name, size: v.size })),
+        videos,
       });
 
       toast({
@@ -305,7 +324,7 @@ export default function NewCampaign() {
 
     try {
       // 1. Create the campaign
-      const campaignData: any = {
+      const campaignData: Record<string, unknown> = {
         user_id: user.id,
         title: campaignName.trim(),
         description: description.trim(),
@@ -331,6 +350,10 @@ export default function NewCampaign() {
 
       // Logo opacity for watermarking
       campaignData.logo_opacity = logoOpacity;
+      campaignData.video_order_mode = videoOrderMode;
+      campaignData.start_video_index = Math.max(0, Math.floor(startVideoIndex));
+      campaignData.sequence_step = Math.max(1, Math.floor(sequenceStep));
+      campaignData.avoid_same_time_video_collisions = avoidSameTimeVideoCollisions;
 
       // Set video source based on mode
       if (sourceType === 'folder' && folderInfo) {
@@ -410,6 +433,10 @@ export default function NewCampaign() {
             skipLowQuality, // Auto-skip videos below 720p or with extreme aspect ratios
             timezone, // User's timezone for correct scheduling
             startFromTomorrow, // Start scheduling from tomorrow
+            videoOrderMode,
+            startVideoIndex: Math.max(0, Math.floor(startVideoIndex)),
+            sequenceStep: Math.max(1, Math.floor(sequenceStep)),
+            avoidSameTimeVideoCollisions,
           }),
         }
       );
@@ -917,6 +944,54 @@ https://drive.google.com/file/d/def456/view"
         {/* Scheduling */}
         <section className="space-y-4">
           <h2 className="text-ios-title3 text-foreground px-1">Daily Schedule</h2>
+
+          <div className="ios-card p-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Video Sequence Rule</Label>
+              <Select value={videoOrderMode} onValueChange={(v) => setVideoOrderMode(v as VideoOrderMode)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select sequence mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sequential">Sequential (folder order)</SelectItem>
+                  <SelectItem value="random">Randomized order</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Start from Video Index</Label>
+                <IOSInput
+                  type="number"
+                  min={0}
+                  value={String(startVideoIndex)}
+                  onChange={(e) => setStartVideoIndex(Math.max(0, Number(e.target.value || 0)))}
+                  placeholder="0"
+                />
+                <p className="text-xs text-muted-foreground">Use this to start from middle for large folders (e.g. 2500).</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Sequence Step</Label>
+                <IOSInput
+                  type="number"
+                  min={1}
+                  value={String(sequenceStep)}
+                  onChange={(e) => setSequenceStep(Math.max(1, Number(e.target.value || 1)))}
+                  placeholder="1"
+                />
+                <p className="text-xs text-muted-foreground">Set &gt;1 to alter sequence across pages/campaigns using the same folder.</p>
+              </div>
+            </div>
+
+            <IOSSwitch
+              checked={avoidSameTimeVideoCollisions}
+              onCheckedChange={setAvoidSameTimeVideoCollisions}
+              label="Avoid Same-Time Video Repeats"
+              description="Prevents the same user from scheduling the same video at the same minute across campaigns."
+            />
+          </div>
           
           {/* Timezone Selector */}
           <div className="ios-card p-4 space-y-4">

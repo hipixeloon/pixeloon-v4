@@ -347,6 +347,10 @@ export type Database = {
           watermark_settings: Json | null
           ab_test_enabled: boolean | null
           platforms: Json | null
+          video_order_mode: string | null
+          start_video_index: number | null
+          sequence_step: number | null
+          avoid_same_time_video_collisions: boolean | null
         }
         Insert: {
           caption_length?: string | null
@@ -373,6 +377,10 @@ export type Database = {
           watermark_settings?: Json | null
           ab_test_enabled?: boolean | null
           platforms?: Json | null
+          video_order_mode?: string | null
+          start_video_index?: number | null
+          sequence_step?: number | null
+          avoid_same_time_video_collisions?: boolean | null
         }
         Update: {
           caption_length?: string | null
@@ -399,6 +407,10 @@ export type Database = {
           watermark_settings?: Json | null
           ab_test_enabled?: boolean | null
           platforms?: Json | null
+          video_order_mode?: string | null
+          start_video_index?: number | null
+          sequence_step?: number | null
+          avoid_same_time_video_collisions?: boolean | null
         }
         Relationships: []
       }

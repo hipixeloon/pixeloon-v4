@@ -277,9 +277,77 @@ async function batchInsertPosts(
   }
 }
 
+type VideoOrderMode = 'sequential' | 'random'
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(0, Math.floor(value))
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(1, Math.floor(value))
+}
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a)
+  let y = Math.abs(b)
+  while (y !== 0) {
+    const t = y
+    y = x % y
+    x = t
+  }
+  return x
+}
+
+function shuffleArray<T>(input: T[]): T[] {
+  const arr = [...input]
+  for (let i = arr.length - 1; i > 0; i--) {
+    const randomBuffer = new Uint32Array(1)
+    crypto.getRandomValues(randomBuffer)
+    const j = randomBuffer[0] % (i + 1)
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+function buildSequencedVideoList(
+  links: string[],
+  orderMode: VideoOrderMode,
+  startIndex: number,
+  sequenceStep: number
+): string[] {
+  if (links.length <= 1) return [...links]
+
+  const base = orderMode === 'random' ? shuffleArray(links) : [...links]
+  const normalizedStart = startIndex % base.length
+  const normalizedStep = sequenceStep % base.length === 0 ? 1 : sequenceStep % base.length
+
+  if (normalizedStep === 1) {
+    return [...base.slice(normalizedStart), ...base.slice(0, normalizedStart)]
+  }
+
+  // If step and length are not coprime, step walk won't visit all indexes.
+  if (gcd(normalizedStep, base.length) !== 1) {
+    return [...base.slice(normalizedStart), ...base.slice(0, normalizedStart)]
+  }
+
+  const sequenced: string[] = []
+  let index = normalizedStart
+  for (let i = 0; i < base.length; i++) {
+    sequenced.push(base[index])
+    index = (index + normalizedStep) % base.length
+  }
+  return sequenced
+}
+
+function getSlotMinuteKey(date: Date): string {
+  return date.toISOString().slice(0, 16)
+}
+
 // Function to add random offset to a time
 function applyRandomOffset(baseTime: Date, randomize: boolean, rangeMinutes: number): Date {
-  if (!randomize) return baseTime
+  if (!randomize || rangeMinutes <= 0) return baseTime
   
   // Random offset between -rangeMinutes and +rangeMinutes
   const offsetMinutes = Math.floor(Math.random() * (rangeMinutes * 2 + 1)) - rangeMinutes
@@ -352,7 +420,11 @@ Deno.serve(async (req) => {
       scheduleAllVideos = true, 
       skipLowQuality = false,
       timezone = 'Asia/Kolkata', // Default to IST
-      startFromTomorrow = false 
+      startFromTomorrow = false,
+      videoOrderMode = 'sequential',
+      startVideoIndex = 0,
+      sequenceStep = 1,
+      avoidSameTimeVideoCollisions = true,
     } = await req.json()
 
     if (!campaignId) {
@@ -362,7 +434,11 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log('Generating schedule for campaign:', campaignId, 'days:', days, 'generateAI:', generateAI, 'scheduleAllVideos:', scheduleAllVideos, 'skipLowQuality:', skipLowQuality, 'timezone:', timezone, 'startFromTomorrow:', startFromTomorrow)
+    const normalizedOrderMode: VideoOrderMode = videoOrderMode === 'random' ? 'random' : 'sequential'
+    const normalizedStartIndex = normalizeNonNegativeInteger(startVideoIndex, 0)
+    const normalizedSequenceStep = normalizePositiveInteger(sequenceStep, 1)
+
+    console.log('Generating schedule for campaign:', campaignId, 'days:', days, 'generateAI:', generateAI, 'scheduleAllVideos:', scheduleAllVideos, 'skipLowQuality:', skipLowQuality, 'timezone:', timezone, 'startFromTomorrow:', startFromTomorrow, 'videoOrderMode:', normalizedOrderMode, 'startVideoIndex:', normalizedStartIndex, 'sequenceStep:', normalizedSequenceStep, 'avoidSameTimeVideoCollisions:', !!avoidSameTimeVideoCollisions)
 
     // Get campaign with video links and folder info
     const { data: campaign, error: campaignError } = await supabase
@@ -525,6 +601,56 @@ Deno.serve(async (req) => {
       )
     }
 
+    // Apply sequencing strategy for this campaign
+    newVideoLinks = buildSequencedVideoList(
+      newVideoLinks,
+      normalizedOrderMode,
+      normalizedStartIndex,
+      normalizedSequenceStep
+    )
+
+    // Build user-level slot locks to prevent same video being scheduled at the same minute
+    const sameTimeLocks = new Set<string>()
+    if (avoidSameTimeVideoCollisions && campaign.user_id) {
+      const { data: userCampaigns, error: userCampaignsError } = await supabase
+        .from('campaigns')
+        .select('id')
+        .eq('user_id', campaign.user_id)
+
+      if (userCampaignsError) throw userCampaignsError
+
+      const campaignIds = (userCampaigns || []).map((c: { id: string }) => c.id)
+      if (campaignIds.length > 0) {
+        let lockHasMore = true
+        let lockOffset = 0
+        const lockBatchSize = 1000
+
+        while (lockHasMore) {
+          const { data: lockedPosts, error: lockedPostsError } = await supabase
+            .from('scheduled_posts')
+            .select('scheduled_time, video_url, status')
+            .in('campaign_id', campaignIds)
+            .neq('status', 'failed')
+            .neq('status', 'rejected')
+            .range(lockOffset, lockOffset + lockBatchSize - 1)
+
+          if (lockedPostsError) throw lockedPostsError
+
+          if (lockedPosts && lockedPosts.length > 0) {
+            for (const post of lockedPosts) {
+              if (!post.scheduled_time || !post.video_url) continue
+              const slot = getSlotMinuteKey(new Date(post.scheduled_time))
+              sameTimeLocks.add(`${slot}|${post.video_url}`)
+            }
+            lockOffset += lockBatchSize
+            lockHasMore = lockedPosts.length === lockBatchSize
+          } else {
+            lockHasMore = false
+          }
+        }
+      }
+    }
+
     const scheduledPosts: any[] = []
     const isAIEnabled = campaign.template_type === 'ai'
     const postsPerDay = postTimes.length
@@ -538,8 +664,8 @@ Deno.serve(async (req) => {
       totalDays = days || 7
     }
 
-    let videoIndex = 0
-    const totalVideos = newVideoLinks.length
+    const remainingVideoLinks = [...newVideoLinks]
+    let videosScheduledCount = 0
 
     // Get current time in user's timezone for comparison
     const nowInTz = getNowInTimezone(timezone)
@@ -553,7 +679,7 @@ Deno.serve(async (req) => {
     const startDayOffset = startFromTomorrow ? 1 : 0
 
     // Generate posts - iterate through all NEW videos
-    for (let dayIndex = 0; dayIndex < totalDays && videoIndex < totalVideos; dayIndex++) {
+    for (let dayIndex = 0; dayIndex < totalDays && remainingVideoLinks.length > 0; dayIndex++) {
       // Create base date in user's timezone
       const baseDate = new Date(nowInTz)
       baseDate.setDate(baseDate.getDate() + dayIndex + startDayOffset)
@@ -562,7 +688,7 @@ Deno.serve(async (req) => {
 
       // For each post time slot
       for (const postTime of postTimes) {
-        if (videoIndex >= totalVideos) break
+        if (remainingVideoLinks.length === 0) break
 
         const [hours, minutes] = postTime.post_time.split(':').map(Number)
         
@@ -579,12 +705,35 @@ Deno.serve(async (req) => {
         const actualScheduledTime = applyRandomOffset(
           scheduledDate,
           postTime.randomize,
-          postTime.random_range_minutes
+          postTime.random_range_minutes ?? 0
         )
 
-        // Get next video (use each video once)
-        const videoUrl = newVideoLinks[videoIndex]
-        videoIndex++
+        if (actualScheduledTime <= nowUtc) {
+          console.log(`Skipping randomised past time: ${actualScheduledTime.toISOString()}`)
+          continue
+        }
+
+        const slotKey = getSlotMinuteKey(actualScheduledTime)
+        let videoUrl: string | null = null
+        let attempts = remainingVideoLinks.length
+        while (attempts > 0) {
+          const candidate = remainingVideoLinks.shift()!
+          const lockKey = `${slotKey}|${candidate}`
+          if (!avoidSameTimeVideoCollisions || !sameTimeLocks.has(lockKey)) {
+            videoUrl = candidate
+            sameTimeLocks.add(lockKey)
+            videosScheduledCount++
+            break
+          }
+          // Put it back for future slots
+          remainingVideoLinks.push(candidate)
+          attempts--
+        }
+
+        if (!videoUrl) {
+          console.log(`No available video for slot ${slotKey} without collision; skipping this slot`)
+          continue
+        }
 
         // For AI mode: caption will be generated at post time
         // For manual mode: use the custom caption
@@ -647,7 +796,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Generated ${scheduledPosts.length} scheduled posts for ${videoIndex} new videos across ${totalDays} days`)
+    console.log(`Generated ${scheduledPosts.length} scheduled posts for ${videosScheduledCount} new videos across ${totalDays} days`)
 
     // Batch insert all scheduled posts (500 at a time to avoid limits)
     if (scheduledPosts.length > 0) {
@@ -658,12 +807,12 @@ Deno.serve(async (req) => {
       JSON.stringify({ 
         success: true,
         postsCreated: scheduledPosts.length,
-        videosScheduled: videoIndex,
+        videosScheduled: videosScheduledCount,
         videosFound: videoLinks.length,
         duplicatesSkipped,
         daysSpanned: totalDays,
         sourceType: campaign.drive_folder_id ? 'folder' : 'manual',
-        message: `Created ${scheduledPosts.length} scheduled posts for ${videoIndex} new videos across ${totalDays} days.${duplicatesSkipped > 0 ? ` Skipped ${duplicatesSkipped} already scheduled.` : ''}`
+        message: `Created ${scheduledPosts.length} scheduled posts for ${videosScheduledCount} new videos across ${totalDays} days.${duplicatesSkipped > 0 ? ` Skipped ${duplicatesSkipped} already scheduled.` : ''}`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
