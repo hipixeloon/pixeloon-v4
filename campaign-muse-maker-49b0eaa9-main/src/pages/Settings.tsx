@@ -11,6 +11,16 @@ import { toast } from '@/hooks/use-toast';
 import { usePlatformConnections } from '@/hooks/usePlatformConnections';
 import { supabase } from '@/integrations/supabase/client';
 
+const getSafeHttpUrl = (value: string): string | null => {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
 export default function Settings() {
   const { theme, toggleTheme } = useTheme();
   const { user, signOut } = useAuth();
@@ -40,6 +50,7 @@ export default function Settings() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const safeWatermarkPreviewUrl = getSafeHttpUrl(watermarkImageUrl);
   
   const { 
     fbPages, 
@@ -196,9 +207,8 @@ export default function Settings() {
       toast({ title: 'Enter a watermark image URL', variant: 'destructive' });
       return;
     }
-    try {
-      new URL(cleanUrl);
-    } catch {
+    const normalizedUrl = getSafeHttpUrl(cleanUrl);
+    if (!normalizedUrl) {
       toast({ title: 'Invalid URL format', variant: 'destructive' });
       return;
     }
@@ -207,7 +217,7 @@ export default function Settings() {
     try {
       const { error: profileError } = await supabase
         .from('profiles')
-        .update({ watermark_image_path: cleanUrl })
+        .update({ watermark_image_path: normalizedUrl })
         .eq('user_id', user.id);
       if (profileError) throw profileError;
 
@@ -442,7 +452,7 @@ export default function Settings() {
           </h2>
           <div className="ios-section p-4 space-y-4">
             <p className="text-ios-caption text-muted-foreground">
-              Use a direct JPG/PNG image URL (for example Blogger-hosted). Auto-poster will load this URL directly.
+              Use a direct JPG/PNG image URL (for example, Blogger-hosted). Auto-poster will load this URL directly.
             </p>
             <IOSInput
               type="url"
@@ -458,8 +468,8 @@ export default function Settings() {
                 Clear
               </IOSButton>
             </div>
-            {watermarkImageUrl && (
-              <img src={watermarkImageUrl} alt="Watermark preview" className="w-full max-w-[220px] rounded-lg border border-border" />
+            {safeWatermarkPreviewUrl && (
+              <img src={safeWatermarkPreviewUrl} alt="Watermark preview" className="w-full max-w-[220px] rounded-lg border border-border" />
             )}
           </div>
         </section>
