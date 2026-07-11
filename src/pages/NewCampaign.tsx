@@ -47,7 +47,7 @@ const DEFAULT_POST_TIMES: PostTime[] = [
   { id: '4', time: '18:30', randomize: true, randomRange: 30 },
 ];
 
-const SUPABASE_URL = 'https://jtsopnmudnvyqvlaptof.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SERVICE_ACCOUNT_EMAIL = 'drive-downloader@elite-bird-483008-h2.iam.gserviceaccount.com';
 
 // Helper to parse video links from bulk input - filters out folder links

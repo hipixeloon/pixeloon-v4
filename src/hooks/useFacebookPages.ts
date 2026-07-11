@@ -18,7 +18,7 @@ export interface FacebookSyncDebug {
   totalAfterDedup: number;
 }
 
-const SUPABASE_URL = 'https://jtsopnmudnvyqvlaptof.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 export function useFacebookPages(userId: string | undefined) {
   const [pages, setPages] = useState<FacebookPage[]>([]);

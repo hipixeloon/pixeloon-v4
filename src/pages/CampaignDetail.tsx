@@ -33,7 +33,7 @@ const TIMEZONES = [
   { value: 'Pacific/Auckland', label: 'Auckland (NZST)' },
 ];
 
-const SUPABASE_URL = 'https://jtsopnmudnvyqvlaptof.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const POSTS_PER_PAGE = 20;
 
 interface ScheduledPost {

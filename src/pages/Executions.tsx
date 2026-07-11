@@ -7,7 +7,7 @@ import { PullToRefresh } from '@/components/ui/PullToRefresh';
 import { ExecutionsSkeleton } from '@/components/skeletons/ExecutionsSkeleton';
 import { toast } from '@/hooks/use-toast';
 
-const SUPABASE_URL = 'https://jtsopnmudnvyqvlaptof.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ITEMS_PER_PAGE = 10;
 
 interface CronExecution {

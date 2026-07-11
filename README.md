@@ -2,6 +2,8 @@
 
 Pixeloon is an automated social media campaign management platform that enables users to schedule and publish video content across Facebook, Instagram, and YouTube with AI-generated captions.
 
+> **📖 New here? Follow the [Complete Production Setup Guide](docs/SETUP.md)** — it covers the Supabase deployment (migrations, edge functions, cron), the frontend, and the per-user API keys (Gemini, Google Drive service account, Facebook App, YouTube OAuth) step by step, plus a verification checklist and troubleshooting table.
+
 ## Features
 
 ### Campaign Management

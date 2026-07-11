@@ -41,6 +41,8 @@ export default function Settings() {
   const [facebookAppSecret, setFacebookAppSecret] = useState('');
   const [youtubeClientId, setYouTubeClientId] = useState('');
   const [youtubeClientSecret, setYouTubeClientSecret] = useState('');
+  const [driveServiceEmail, setDriveServiceEmail] = useState('');
+  const [driveServicePrivateKey, setDriveServicePrivateKey] = useState('');
   const [savingOAuthKeys, setSavingOAuthKeys] = useState(false);
   const [watermarkImageUrl, setWatermarkImageUrl] = useState('');
   const [savingWatermarkUrl, setSavingWatermarkUrl] = useState(false);
@@ -90,13 +92,15 @@ export default function Settings() {
       .from('user_api_keys')
       .select('key_name, api_key')
       .eq('user_id', user.id)
-      .in('key_name', ['facebook_app_id', 'facebook_app_secret', 'youtube_client_id', 'youtube_client_secret']);
+      .in('key_name', ['facebook_app_id', 'facebook_app_secret', 'youtube_client_id', 'youtube_client_secret', 'google_service_account_email', 'google_service_account_private_key']);
 
     const map = new Map((data || []).map((item) => [item.key_name, item.api_key]));
     setFacebookAppId(map.get('facebook_app_id') ? MASKED_CREDENTIAL : '');
     setFacebookAppSecret(map.get('facebook_app_secret') ? MASKED_CREDENTIAL : '');
     setYouTubeClientId(map.get('youtube_client_id') ? MASKED_CREDENTIAL : '');
     setYouTubeClientSecret(map.get('youtube_client_secret') ? MASKED_CREDENTIAL : '');
+    setDriveServiceEmail(map.get('google_service_account_email') || '');
+    setDriveServicePrivateKey(map.get('google_service_account_private_key') ? MASKED_CREDENTIAL : '');
   }, [user]);
 
   const fetchWatermarkUrl = useCallback(async () => {
@@ -183,6 +187,11 @@ export default function Settings() {
       if (cleanFacebookAppSecret && cleanFacebookAppSecret !== MASKED_CREDENTIAL) updates.push({ key_name: 'facebook_app_secret', api_key: cleanFacebookAppSecret });
       if (cleanYouTubeClientId && cleanYouTubeClientId !== MASKED_CREDENTIAL) updates.push({ key_name: 'youtube_client_id', api_key: cleanYouTubeClientId });
       if (cleanYouTubeClientSecret && cleanYouTubeClientSecret !== MASKED_CREDENTIAL) updates.push({ key_name: 'youtube_client_secret', api_key: cleanYouTubeClientSecret });
+
+      const cleanDriveEmail = driveServiceEmail.trim();
+      const cleanDrivePrivateKey = driveServicePrivateKey.trim();
+      if (cleanDriveEmail && cleanDriveEmail !== MASKED_CREDENTIAL) updates.push({ key_name: 'google_service_account_email', api_key: cleanDriveEmail });
+      if (cleanDrivePrivateKey && cleanDrivePrivateKey !== MASKED_CREDENTIAL) updates.push({ key_name: 'google_service_account_private_key', api_key: cleanDrivePrivateKey });
 
       if (updates.length === 0) {
         toast({ title: 'No new OAuth credentials to save' });
@@ -473,6 +482,24 @@ export default function Settings() {
               value={youtubeClientSecret}
               onChange={(e) => setYouTubeClientSecret(e.target.value)}
               onFocus={() => youtubeClientSecret === MASKED_CREDENTIAL && setYouTubeClientSecret('')}
+            />
+            <p className="text-ios-caption text-muted-foreground pt-2">
+              Google Drive service account — required for reading your campaign videos. Paste the
+              client_email and private_key from the service account's JSON key file, and share your
+              Drive folders with the service account email.
+            </p>
+            <IOSInput
+              placeholder="Service Account Email (…@….iam.gserviceaccount.com)"
+              value={driveServiceEmail}
+              onChange={(e) => setDriveServiceEmail(e.target.value)}
+            />
+            <textarea
+              placeholder={'Service Account Private Key\n-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'}
+              value={driveServicePrivateKey}
+              onChange={(e) => setDriveServicePrivateKey(e.target.value)}
+              onFocus={() => driveServicePrivateKey === MASKED_CREDENTIAL && setDriveServicePrivateKey('')}
+              rows={4}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
             />
             <IOSButton onClick={handleSaveOAuthKeys} disabled={savingOAuthKeys}>
               {savingOAuthKeys ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save OAuth Credentials'}
