@@ -23,6 +23,7 @@ interface ScheduledPost {
   status: string
   needs_ai_caption: boolean | null
   platforms: { facebook?: boolean; instagram?: boolean; youtube?: boolean } | null
+  processing_started_at?: string | null
 }
 
 // ============ Google Drive API Authentication ============
@@ -196,8 +197,18 @@ interface WatermarkBrandRule {
   interval?: number
 }
 
+type WatermarkPosition = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'center'
+
+interface WatermarkPlacementConfig {
+  mode?: 'fixed' | 'random' | 'fullscreen'
+  position?: WatermarkPosition
+  widthPercent?: number
+  heightPercent?: number
+}
+
 interface WatermarkSettingsConfig {
   enabled?: boolean
+  placement?: WatermarkPlacementConfig
   brands?: WatermarkBrandRule[]
 }
 
@@ -502,7 +513,28 @@ async function downloadVideoWithMetadata(driveUrl: string, accessToken: string):
 
 // ============ Cloudinary Video Watermarking ============
 
-async function applyWatermark(videoBlob: Blob, logoUrl: string, opacity = 80): Promise<Blob> {
+const WATERMARK_GRAVITY: Record<WatermarkPosition, string> = {
+  'bottom-right': 'south_east',
+  'bottom-left': 'south_west',
+  'top-right': 'north_east',
+  'top-left': 'north_west',
+  'center': 'center',
+}
+
+function resolveWatermarkGravity(placement: WatermarkPlacementConfig | null | undefined): string {
+  if (placement?.mode === 'random') {
+    const corners: WatermarkPosition[] = ['bottom-right', 'bottom-left', 'top-right', 'top-left']
+    return WATERMARK_GRAVITY[corners[Math.floor(Math.random() * corners.length)]]
+  }
+  return WATERMARK_GRAVITY[placement?.position || 'bottom-right'] || 'south_east'
+}
+
+async function applyWatermark(
+  videoBlob: Blob,
+  logoUrl: string,
+  opacity = 80,
+  placement: WatermarkPlacementConfig | null = null
+): Promise<Blob> {
   const cloudName = Deno.env.get('CLOUDINARY_CLOUD_NAME')
   const apiKey = Deno.env.get('CLOUDINARY_API_KEY')
   const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET')
@@ -537,11 +569,18 @@ async function applyWatermark(videoBlob: Blob, logoUrl: string, opacity = 80): P
     const uploadData = await uploadResp.json()
     const publicId = uploadData.public_id
 
-    // 2. Generate watermark URL with opacity support
+    // 2. Generate watermark URL with opacity + placement support
     // opacity is 0-100; Cloudinary uses o_{value} for opacity (0-100)
     const clampedOpacity = Math.max(0, Math.min(100, Math.round(opacity)))
+    const isFullscreen = placement?.mode === 'fullscreen'
+    const gravity = isFullscreen ? 'center' : resolveWatermarkGravity(placement)
+    const widthPercent = isFullscreen
+      ? 100
+      : Math.max(5, Math.min(100, Math.floor(placement?.widthPercent || 15)))
+    const relativeWidth = (widthPercent / 100).toFixed(2)
+    const edgeOffset = gravity === 'center' ? '' : ',x_30,y_30'
     const logoB64 = btoa(logoUrl).replace(/\//g, '_').replace(/\+/g, '-')
-    const transformation = `l_fetch:${logoB64},o_${clampedOpacity},fl_layer_apply,g_south_east,x_30,y_30,w_0.15/`
+    const transformation = `l_fetch:${logoB64},w_${relativeWidth},fl_relative,o_${clampedOpacity}/fl_layer_apply,g_${gravity}${edgeOffset}/`
     const watermarkedUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformation}${publicId}.mp4`
     
     console.log('Downloading watermarked video:', watermarkedUrl)
@@ -814,6 +853,41 @@ function cleanVideoNameForTitle(fileName: string, campaignTitle: string): string
   return withoutExtension.slice(0, 70)
 }
 
+// Appends branding lines, affiliate links, and per-brand caption to a caption.
+// Applied to both AI and manual captions. Containment checks keep retries from
+// appending the same text twice when a previously saved caption is reused.
+function appendCaptionExtras(
+  caption: string,
+  postIndex: number,
+  brandingLines: BrandingLinesConfig | null | undefined,
+  affiliateLinks: AffiliateLinksConfig | null | undefined,
+  brandCaption: string | null
+): string {
+  let result = (caption || '').trim()
+
+  if (brandingLines?.enabled && shouldApplyByFrequency(postIndex, brandingLines.frequency, brandingLines.interval)) {
+    const brandingText = (brandingLines.text || 'DM for credit/removal').trim()
+    if (brandingText && !result.includes(brandingText)) {
+      result += '\n\n' + brandingText
+    }
+  }
+
+  const links = affiliateLinks?.links || []
+  if (affiliateLinks?.enabled && links.length > 0 &&
+      shouldApplyByFrequency(postIndex, affiliateLinks.frequency, affiliateLinks.interval)) {
+    const link = String(links[postIndex % links.length] || '').trim()
+    if (link && !result.includes(link)) {
+      result += '\n\n🔗 ' + link
+    }
+  }
+
+  if (brandCaption && !result.includes(brandCaption)) {
+    result += '\n\n' + brandCaption
+  }
+
+  return result.trim()
+}
+
 function buildYouTubeTitle(
   videoMetadata: VideoMetadata,
   campaignTitle: string,
@@ -844,8 +918,6 @@ async function generateVideoAwareCaption(
   hashtagCount: number = 8,
   targetingCountry: string | null = null,
   targetingTone: string | null = null,
-  brandingLines: BrandingLinesConfig | null = null,
-  affiliateLinks: AffiliateLinksConfig | null = null,
   fallbackCaptions: string[] = []
 ): Promise<{ caption: string; hashtags: string[] }> {
   // Only use user's API key from database - no system fallback
@@ -992,21 +1064,9 @@ Seed: ${Date.now()}-${postIndex}-${Math.random().toString(36).substring(7)}`
     }
 
     const promptLeakPattern = /(CAPTION LENGTH REQUIREMENT|HASHTAG COUNT REQUIREMENT|CRITICAL LANGUAGE RULES|Seed:\s*\d{5,})/i
-    let finalCaption = promptLeakPattern.test(resultCaption)
+    const finalCaption = promptLeakPattern.test(resultCaption)
       ? getFallbackCaption(campaignName, fallbackCaptions, postIndex)
       : resultCaption
-    const isEveryNPostsBranding = brandingLines?.frequency !== 'every';
-    const brandingInterval = clampFrequencyInterval(brandingLines?.interval);
-    if (brandingLines?.enabled && (!isEveryNPostsBranding || postIndex % brandingInterval === 0)) {
-      finalCaption += '\n\n' + (brandingLines.text || 'DM for credit/removal');
-    }
-
-    const isEveryNPostsAffiliate = affiliateLinks?.frequency !== 'every';
-    const affiliateInterval = clampFrequencyInterval(affiliateLinks?.interval);
-    if (affiliateLinks?.enabled && (!isEveryNPostsAffiliate || postIndex % affiliateInterval === 0) && affiliateLinks.links?.length > 0) {
-      const link = affiliateLinks.links[postIndex % affiliateLinks.links.length];
-      finalCaption += '\n\n🔗 ' + link;
-    }
 
     return {
       caption: finalCaption.trim(),
@@ -1083,36 +1143,86 @@ serve(async (req) => {
     let pendingPosts: ScheduledPost[] = []
 
     if (requestBody.postId) {
-      // Process specific post (for "Post Now" - marked as 'processing')
+      // Process specific post (for "Post Now" - marked as 'processing' by the client).
+      // Atomically claim it by stamping processing_started_at so a double-click or a
+      // duplicate invocation can never process the same post twice.
       console.log(`Processing specific post: ${requestBody.postId}`)
-      const { data, error } = await supabase
+      const { data: claimed, error } = await supabase
         .from('scheduled_posts')
-        .select('*')
+        .update({ processing_started_at: new Date().toISOString() })
         .eq('id', requestBody.postId)
         .eq('status', 'processing')
-        .single()
-      
-      if (error || !data) {
-        console.log('Post not found or already processed')
-        return new Response(JSON.stringify({ message: 'Post not found or already processed', processed: 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        .is('processing_started_at', null)
+        .select('*')
+
+      if (error || !claimed || claimed.length === 0) {
+        console.log('Post not found, already processed, or already being processed')
+        return new Response(JSON.stringify({ message: 'Post not found or already being processed', processed: 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
       }
-      pendingPosts = [data]
+      pendingPosts = claimed
     } else {
-      // Normal cron behavior - get pending posts that are due
+      // Recover posts stuck in 'processing' (function timeout/crash mid-run).
+      // Posts that never published anywhere go back to 'pending'; posts that already
+      // published to at least one platform are marked 'failed' so a retry (which skips
+      // already-published platforms) is explicit and can never double-post.
+      const STALE_PROCESSING_MINUTES = 15
+      const staleCutoff = new Date(Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000).toISOString()
+
+      const { data: stalePosts } = await supabase
+        .from('scheduled_posts')
+        .select('id, facebook_post_id, instagram_media_id, youtube_video_id, processing_started_at, updated_at')
+        .eq('status', 'processing')
+        .or(`processing_started_at.lt.${staleCutoff},and(processing_started_at.is.null,updated_at.lt.${staleCutoff})`)
+
+      for (const stale of stalePosts || []) {
+        const hasPublished = !!(stale.facebook_post_id || stale.instagram_media_id || stale.youtube_video_id)
+        console.log(`Recovering stale processing post ${stale.id} (published somewhere: ${hasPublished})`)
+        const { error: recoverError } = await supabase
+          .from('scheduled_posts')
+          .update(hasPublished
+            ? {
+                status: 'failed',
+                error_message: 'Processing timed out after publishing to some platforms. Retry will skip the platforms that already received this video.',
+                processing_started_at: null,
+              }
+            : { status: 'pending', processing_started_at: null })
+          .eq('id', stale.id)
+          .eq('status', 'processing')
+
+        if (recoverError) {
+          // Requeue can hit the pending-uniqueness index if a duplicate pending row
+          // already exists for the same video/target; fail this row instead of
+          // leaving it stuck in processing.
+          console.error(`Failed to requeue stale post ${stale.id}:`, recoverError)
+          await supabase
+            .from('scheduled_posts')
+            .update({
+              status: 'failed',
+              error_message: 'Could not requeue after timeout (a duplicate pending post already exists for this video).',
+              processing_started_at: null,
+            })
+            .eq('id', stale.id)
+            .eq('status', 'processing')
+        }
+      }
+
+      // Normal cron behavior - get pending posts that are due, skipping paused
+      // campaigns. NULL-status campaigns must still post (neq alone would drop them).
       const { data, error: fetchError } = await supabase
         .from('scheduled_posts')
-        .select('id')
+        .select('id, campaigns!inner(status)')
         .eq('status', 'pending')
+        .or('status.neq.paused,status.is.null', { foreignTable: 'campaigns' })
         .lte('scheduled_time', new Date().toISOString())
         .order('scheduled_time', { ascending: true })
-        .limit(5)
-      
+        .limit(3)
+
       if (fetchError) throw fetchError
       const postIdsToClaim = (data || []).map((row: { id: string }) => row.id)
       if (postIdsToClaim.length > 0) {
         const { data: claimedPosts, error: claimError } = await supabase
           .from('scheduled_posts')
-          .update({ status: 'processing' })
+          .update({ status: 'processing', processing_started_at: new Date().toISOString() })
           .in('id', postIdsToClaim)
           .eq('status', 'pending')
           .select('*')
@@ -1215,12 +1325,18 @@ serve(async (req) => {
         const brandingLogoUrl = selectedBrandRule?.logoUrl?.trim() || campaign?.branding_logo_url || profileWatermarkUrl
         if (brandingLogoUrl) {
           const logoOpacity = typeof campaign.logo_opacity === 'number' ? campaign.logo_opacity : 80
-          const watermarkedBlob = await applyWatermark(videoResult.blob, brandingLogoUrl, logoOpacity)
+          const watermarkedBlob = await applyWatermark(videoResult.blob, brandingLogoUrl, logoOpacity, watermarkSettings?.placement || null)
           videoResult.blob = watermarkedBlob
         }
 
+        // If this post already published to at least one platform (partial retry),
+        // reuse the saved caption verbatim — it already includes branding extras
+        // from the original run, and re-decorating it with a drifted post index
+        // could append a second affiliate link or a different brand caption.
+        const reuseSavedCaption = !!(post.facebook_post_id || post.instagram_media_id || post.youtube_video_id) && !!caption
+
         // Generate AI caption using video thumbnail and metadata
-        if (post.needs_ai_caption || !caption) {
+        if ((post.needs_ai_caption || !caption) && !reuseSavedCaption) {
           const userGeminiKey = userKeys.get('gemini') || null
           
           // Get caption settings from campaign
@@ -1249,16 +1365,22 @@ serve(async (req) => {
             hashtagCount,
             campaign?.targeting_country,
             campaign?.targeting_tone,
-            campaign?.branding_lines,
-            campaign?.affiliate_links,
             fallbackCaptions
           )
           caption = aiResult.caption
           hashtags = aiResult.hashtags
         }
 
-        if (selectedBrandRule?.caption?.trim()) {
-          caption = `${caption}\n\n${selectedBrandRule.caption.trim()}`.trim()
+        // Branding lines, affiliate links, and per-brand caption apply to both
+        // AI-generated and manual captions.
+        if (!reuseSavedCaption) {
+          caption = appendCaptionExtras(
+            caption,
+            postIndexForRules,
+            campaign?.branding_lines as BrandingLinesConfig | null,
+            campaign?.affiliate_links as AffiliateLinksConfig | null,
+            selectedBrandRule?.caption?.trim() || null
+          )
         }
         
         // Check video quality - REJECT if below 720p (no retry for this video)
@@ -1325,14 +1447,27 @@ serve(async (req) => {
           youtube: !!post.youtube_channel_id,
         }
 
+        // Persist a platform result immediately after each successful upload so a
+        // crash/timeout later in this run can never lose the fact that we already
+        // published there (the retry path skips platforms with a saved post ID).
+        const persistPlatformResult = async (fields: Partial<PostUpdatePayload>) => {
+          Object.assign(postUpdates, fields)
+          await supabase
+            .from('scheduled_posts')
+            .update({ ...fields, caption, hashtags })
+            .eq('id', post.id)
+        }
+
         // 1. Facebook
-        if (pConf.facebook && post.facebook_page_id) {
+        if (pConf.facebook && post.facebook_page_id && post.facebook_post_id) {
+          console.log(`Facebook already published for post ${post.id} (${post.facebook_post_id}), skipping`)
+        } else if (pConf.facebook && post.facebook_page_id) {
           const { data: page, error: pageError } = await supabase
             .from('facebook_pages')
             .select('*')
             .eq('id', post.facebook_page_id)
             .single()
-            
+
           if (pageError || !page) {
             allSuccess = false; errors.push("FB Page not found.")
           } else {
@@ -1341,20 +1476,21 @@ serve(async (req) => {
             if ('error' in fbResult) {
               allSuccess = false; errors.push(`FB: ${fbResult.error.message}`)
             } else {
-              postUpdates.facebook_post_id = fbResult.id
-              postUpdates.permalink_url = fbResult.permalinkUrl || null
+              await persistPlatformResult({ facebook_post_id: fbResult.id, permalink_url: fbResult.permalinkUrl || null })
             }
           }
         }
 
         // 2. Instagram
-        if (pConf.instagram && post.instagram_account_id) {
+        if (pConf.instagram && post.instagram_account_id && post.instagram_media_id) {
+          console.log(`Instagram already published for post ${post.id} (${post.instagram_media_id}), skipping`)
+        } else if (pConf.instagram && post.instagram_account_id) {
           const { data: igAcc, error: igError } = await supabase
             .from('instagram_accounts')
             .select('*, facebook_pages(access_token)')
             .eq('id', post.instagram_account_id)
             .single()
-            
+
           if (igError || !igAcc) {
             allSuccess = false; errors.push("IG Account not found.")
           } else {
@@ -1367,21 +1503,25 @@ serve(async (req) => {
               if ('error' in res) {
                 allSuccess = false; errors.push(`IG: ${res.error.message}`)
               } else {
-                postUpdates.instagram_media_id = res.id
-                if (!postUpdates.permalink_url && res.permalinkUrl) postUpdates.permalink_url = res.permalinkUrl
+                await persistPlatformResult({
+                  instagram_media_id: res.id,
+                  ...(!postUpdates.permalink_url && res.permalinkUrl ? { permalink_url: res.permalinkUrl } : {}),
+                })
               }
             }
           }
         }
 
         // 3. YouTube
-        if (pConf.youtube && post.youtube_channel_id) {
+        if (pConf.youtube && post.youtube_channel_id && post.youtube_video_id) {
+          console.log(`YouTube already published for post ${post.id} (${post.youtube_video_id}), skipping`)
+        } else if (pConf.youtube && post.youtube_channel_id) {
            const { data: ytChannel, error: ytError } = await supabase
             .from('youtube_channels')
             .select('*')
             .eq('id', post.youtube_channel_id)
             .single()
-            
+
            if (ytError || !ytChannel) {
              allSuccess = false; errors.push("YT Channel not found.")
            } else {
@@ -1399,8 +1539,10 @@ serve(async (req) => {
                 if ('error' in res) {
                   allSuccess = false; errors.push(`YT: ${res.error.message}`)
                 } else {
-                  postUpdates.youtube_video_id = res.id
-                  if (!postUpdates.permalink_url && res.permalinkUrl) postUpdates.permalink_url = res.permalinkUrl
+                  await persistPlatformResult({
+                    youtube_video_id: res.id,
+                    ...(!postUpdates.permalink_url && res.permalinkUrl ? { permalink_url: res.permalinkUrl } : {}),
+                  })
                 }
               } catch (ytErr) {
                 allSuccess = false; errors.push(`YT Refresh: ${ytErr instanceof Error ? ytErr.message : String(ytErr)}`)

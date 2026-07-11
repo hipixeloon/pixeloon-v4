@@ -269,20 +269,39 @@ async function batchInsertPosts(
   supabase: ReturnType<typeof createClient>,
   posts: ScheduledPostInsert[],
   batchSize: number = 500
-): Promise<void> {
+): Promise<number> {
   console.log(`Batch inserting ${posts.length} posts in chunks of ${batchSize}`)
-  
+  let inserted = 0
+
   for (let i = 0; i < posts.length; i += batchSize) {
     const batch = posts.slice(i, i + batchSize)
     const { error } = await supabase.from('scheduled_posts').insert(batch)
-    
+
     if (error) {
+      // Unique-index violation means some rows are already scheduled (e.g. a
+      // concurrent generation). Fall back to row-by-row, skipping duplicates.
+      if (error.code === '23505') {
+        console.log(`Batch at index ${i} hit duplicates; inserting row-by-row and skipping them`)
+        for (const row of batch) {
+          const { error: rowError } = await supabase.from('scheduled_posts').insert(row)
+          if (!rowError) {
+            inserted++
+          } else if (rowError.code !== '23505') {
+            console.error('Row insert error:', rowError)
+            throw rowError
+          }
+        }
+        continue
+      }
       console.error(`Batch insert error at index ${i}:`, error)
       throw error
     }
-    
+
+    inserted += batch.length
     console.log(`Inserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(posts.length / batchSize)}`)
   }
+
+  return inserted
 }
 
 type VideoOrderMode = 'sequential' | 'random'
@@ -458,6 +477,31 @@ Deno.serve(async (req) => {
     if (campaignError || !campaign) {
       throw new Error('Campaign not found')
     }
+
+    // Acquire a generation lease so two concurrent invocations (double-click,
+    // retried request) can't both insert the same videos. The lease self-expires
+    // after 10 minutes in case a previous run crashed without releasing it.
+    const leaseExpiry = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const { data: leaseRows, error: leaseError } = await supabase
+      .from('campaigns')
+      .update({ schedule_generating_at: new Date().toISOString() })
+      .eq('id', campaignId)
+      .or(`schedule_generating_at.is.null,schedule_generating_at.lt.${leaseExpiry}`)
+      .select('id')
+
+    if (leaseError) throw leaseError
+    if (!leaseRows || leaseRows.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Schedule generation is already running for this campaign. Please wait a moment and refresh.' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const releaseLease = async () => {
+      await supabase.from('campaigns').update({ schedule_generating_at: null }).eq('id', campaignId)
+    }
+
+    try {
 
     const { data: ownerApiKeys, error: ownerApiKeyError } = await supabase
       .from('user_api_keys')
@@ -823,23 +867,28 @@ Deno.serve(async (req) => {
     console.log(`Generated ${scheduledPosts.length} scheduled posts for ${videosScheduledCount} new videos across ${totalDays} days`)
 
     // Batch insert all scheduled posts (500 at a time to avoid limits)
+    let postsCreated = 0
     if (scheduledPosts.length > 0) {
-      await batchInsertPosts(supabase, scheduledPosts, 500)
+      postsCreated = await batchInsertPosts(supabase, scheduledPosts, 500)
     }
 
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: true,
-        postsCreated: scheduledPosts.length,
+        postsCreated,
         videosScheduled: videosScheduledCount,
         videosFound: videoLinks.length,
         duplicatesSkipped,
         daysSpanned: totalDays,
         sourceType: campaign.drive_folder_id ? 'folder' : 'manual',
-        message: `Created ${scheduledPosts.length} scheduled posts for ${videosScheduledCount} new videos across ${totalDays} days.${duplicatesSkipped > 0 ? ` Skipped ${duplicatesSkipped} already scheduled.` : ''}`
+        message: `Created ${postsCreated} scheduled posts for ${videosScheduledCount} new videos across ${totalDays} days.${duplicatesSkipped > 0 ? ` Skipped ${duplicatesSkipped} already scheduled.` : ''}`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
+
+    } finally {
+      await releaseLease()
+    }
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'

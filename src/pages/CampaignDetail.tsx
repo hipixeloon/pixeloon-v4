@@ -88,10 +88,30 @@ interface Campaign {
   branding_lines: Record<string, unknown> | null;
   affiliate_links: Record<string, unknown> | null;
   watermark_settings: Record<string, unknown> | null;
+  video_order_mode?: string | null;
+  start_video_index?: number | null;
+  sequence_step?: number | null;
+  avoid_same_time_video_collisions?: boolean | null;
 }
 
 type WatermarkMode = 'fixed' | 'random' | 'fullscreen';
 type WatermarkPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+type FrequencyMode = 'every' | 'every_n';
+
+interface EditableBrand {
+  id: string;
+  name: string;
+  logoUrl: string;
+  caption: string;
+  enabled: boolean;
+  frequency: FrequencyMode;
+  interval: number;
+}
+
+const MAX_BRANDS = 5;
+
+const clampBrandInterval = (value: number | undefined): number =>
+  Math.max(2, Math.min(5, Math.floor(value || 3)));
 
 interface FacebookPage {
   id: string;
@@ -127,6 +147,7 @@ export default function CampaignDetail() {
   const [triggeringAutoPoster, setTriggeringAutoPoster] = useState(false);
   const [activeTab, setActiveTab] = useState<'pending' | 'posted' | 'failed'>('pending');
   const [folderSync, setFolderSync] = useState<FolderSyncResult | null>(null);
+  const [generatingSchedule, setGeneratingSchedule] = useState(false);
   const [isSyncingFolder, setIsSyncingFolder] = useState(false);
   
   // Filters
@@ -166,6 +187,17 @@ export default function CampaignDetail() {
   const [watermarkWidthPercent, setWatermarkWidthPercent] = useState(18);
   const [watermarkHeightPercent, setWatermarkHeightPercent] = useState(18);
   const [savingCaptionSettings, setSavingCaptionSettings] = useState(false);
+
+  // Branding lines / affiliate links / brand watermark editing
+  const [brandingLinesEnabled, setBrandingLinesEnabled] = useState(false);
+  const [brandingFrequency, setBrandingFrequency] = useState<FrequencyMode>('every');
+  const [brandingInterval, setBrandingInterval] = useState(3);
+  const [brandingText, setBrandingText] = useState('');
+  const [affiliateEnabled, setAffiliateEnabled] = useState(false);
+  const [affiliateFrequency, setAffiliateFrequency] = useState<FrequencyMode>('every');
+  const [affiliateInterval, setAffiliateInterval] = useState(3);
+  const [affiliateLinksInput, setAffiliateLinksInput] = useState('');
+  const [watermarkBrands, setWatermarkBrands] = useState<EditableBrand[]>([]);
   
   // Pause/Resume & Stats
   const [togglingPause, setTogglingPause] = useState(false);
@@ -244,6 +276,35 @@ export default function CampaignDetail() {
       );
       setWatermarkHeightPercent(
         typeof watermarkSettings?.placement?.heightPercent === 'number' ? watermarkSettings.placement.heightPercent : 18
+      );
+
+      const brandingLines = (campaignData.branding_lines || null) as {
+        enabled?: boolean; frequency?: string; interval?: number; text?: string;
+      } | null;
+      setBrandingLinesEnabled(brandingLines?.enabled === true);
+      setBrandingFrequency(brandingLines?.frequency === 'every_n' ? 'every_n' : 'every');
+      setBrandingInterval(clampBrandInterval(brandingLines?.interval));
+      setBrandingText(brandingLines?.text || '');
+
+      const affiliateLinks = (campaignData.affiliate_links || null) as {
+        enabled?: boolean; frequency?: string; interval?: number; links?: string[];
+      } | null;
+      setAffiliateEnabled(affiliateLinks?.enabled === true);
+      setAffiliateFrequency(affiliateLinks?.frequency === 'every_n' ? 'every_n' : 'every');
+      setAffiliateInterval(clampBrandInterval(affiliateLinks?.interval));
+      setAffiliateLinksInput(Array.isArray(affiliateLinks?.links) ? affiliateLinks.links.join('\n') : '');
+
+      const storedBrands = (campaignData.watermark_settings as { brands?: Array<Record<string, unknown>> } | null)?.brands;
+      setWatermarkBrands(
+        (Array.isArray(storedBrands) ? storedBrands : []).slice(0, MAX_BRANDS).map((brand, index) => ({
+          id: String(brand.id || `brand-${index}-${Date.now()}`),
+          name: String(brand.name || ''),
+          logoUrl: String(brand.logoUrl || ''),
+          caption: String(brand.caption || ''),
+          enabled: brand.enabled !== false,
+          frequency: brand.frequency === 'every_n' ? 'every_n' : 'every',
+          interval: clampBrandInterval(typeof brand.interval === 'number' ? brand.interval : undefined),
+        }))
       );
 
       // Fetch post times
@@ -425,6 +486,55 @@ export default function CampaignDetail() {
     }
   };
 
+  const updateWatermarkBrand = (brandId: string, patch: Partial<EditableBrand>) => {
+    setWatermarkBrands((prev) => prev.map((b) => (b.id === brandId ? { ...b, ...patch } : b)));
+  };
+
+  // Schedule any videos in the campaign source that aren't scheduled yet.
+  // The generate-schedule function skips already-scheduled videos, so this is
+  // safe to run repeatedly (e.g. after adding new videos to the Drive folder).
+  const handleGenerateSchedule = async () => {
+    if (!campaign) return;
+
+    setGeneratingSchedule(true);
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/generate-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId: campaign.id,
+          scheduleAllVideos: true,
+          generateAI: (campaign.template_type || 'ai') !== 'manual',
+          timezone,
+          videoOrderMode: campaign.video_order_mode || 'sequential',
+          startVideoIndex: Math.max(0, Math.floor(campaign.start_video_index || 0)),
+          sequenceStep: Math.max(1, Math.floor(campaign.sequence_step || 1)),
+          avoidSameTimeVideoCollisions: campaign.avoid_same_time_video_collisions !== false,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || result.error) {
+        toast({ title: 'Scheduling failed', description: result.error, variant: 'destructive' });
+        return;
+      }
+
+      toast({
+        title: result.postsCreated > 0 ? `${result.postsCreated} new posts scheduled` : 'Nothing new to schedule',
+        description: result.message,
+      });
+      if (result.postsCreated > 0) {
+        await fetchCampaignData();
+      }
+    } catch (err) {
+      console.error('Error generating schedule:', err);
+      toast({ title: 'Failed to generate schedule', variant: 'destructive' });
+    } finally {
+      setGeneratingSchedule(false);
+    }
+  };
+
   const handleDeleteCampaign = async () => {
     if (!confirm('Delete this campaign and all scheduled posts?')) return;
     
@@ -449,29 +559,57 @@ export default function CampaignDetail() {
 
   const handleRetryPost = async (postId: string) => {
     try {
-      await supabase
+      // Conditional update: only a failed post can be requeued, so a retry can
+      // never race a post that is currently publishing.
+      const { data: requeued, error } = await supabase
         .from('scheduled_posts')
-        .update({ status: 'pending', error_message: null })
-        .eq('id', postId);
-      
-      toast({ title: 'Post queued for retry' });
+        .update({ status: 'pending', error_message: null, processing_started_at: null })
+        .eq('id', postId)
+        .eq('status', 'failed')
+        .select('id');
+
+      if (error) throw error;
+      if (!requeued || requeued.length === 0) {
+        toast({ title: 'Post is no longer in a failed state', description: 'Refresh to see its current status.' });
+      } else {
+        toast({ title: 'Post queued for retry', description: 'Platforms that already received this video will be skipped.' });
+      }
       fetchCampaignData();
     } catch (err) {
-      toast({ title: 'Failed to retry post', variant: 'destructive' });
+      const isDuplicatePending = (err as { code?: string })?.code === '23505';
+      toast({
+        title: 'Failed to retry post',
+        description: isDuplicatePending
+          ? 'A pending post for this video and target already exists — delete one of them first.'
+          : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
   const handlePostNow = async (postId: string) => {
     setPostingNow(postId);
     try {
-      await supabase
+      // Atomic claim: only a pending post can move to processing. A double-click
+      // or a second tab gets zero rows back and does nothing.
+      const { data: claimed, error: claimError } = await supabase
         .from('scheduled_posts')
-        .update({ 
+        .update({
           scheduled_time: new Date().toISOString(),
           status: 'processing',
-          error_message: null 
+          error_message: null,
+          processing_started_at: null,
         })
-        .eq('id', postId);
+        .eq('id', postId)
+        .eq('status', 'pending')
+        .select('id');
+
+      if (claimError) throw claimError;
+      if (!claimed || claimed.length === 0) {
+        toast({ title: 'Post is already being processed', description: 'Refresh to see its current status.' });
+        await fetchCampaignData();
+        return;
+      }
 
       const response = await fetch(`${SUPABASE_URL}/functions/v1/auto-poster`, {
         method: 'POST',
@@ -482,10 +620,15 @@ export default function CampaignDetail() {
       const result = await response.json();
 
       if (result.error) {
+        // The function errored at the top level. Requeue only if it provably never
+        // started publishing this post (processing_started_at still unstamped) —
+        // the conditional update makes this safe against any race.
         await supabase
           .from('scheduled_posts')
           .update({ status: 'pending' })
-          .eq('id', postId);
+          .eq('id', postId)
+          .eq('status', 'processing')
+          .is('processing_started_at', null);
         toast({ title: 'Post failed', description: result.error, variant: 'destructive' });
       } else {
         toast({ title: 'Post published publicly!', description: 'Reel is now visible to everyone' });
@@ -493,12 +636,17 @@ export default function CampaignDetail() {
 
       await fetchCampaignData();
     } catch (err) {
+      // IMPORTANT: never reset the post back to 'pending' here. The edge function
+      // may still be uploading, and requeueing it would make the cron publish the
+      // same video a second time. The auto-poster's stale-post recovery requeues
+      // it automatically only if publishing never actually started.
       console.error('Error posting now:', err);
-      await supabase
-        .from('scheduled_posts')
-        .update({ status: 'pending' })
-        .eq('id', postId);
-      toast({ title: 'Failed to post', variant: 'destructive' });
+      toast({
+        title: 'Could not confirm post status',
+        description: 'The post may still be publishing. Its status will reconcile automatically within a few minutes.',
+        variant: 'destructive',
+      });
+      await fetchCampaignData();
     } finally {
       setPostingNow(null);
     }
@@ -561,22 +709,47 @@ export default function CampaignDetail() {
   // Bulk reschedule
   const handleBulkReschedule = async () => {
     if (selectedPosts.size === 0 || !rescheduleDate) return;
-    
+
     setBulkRescheduling(true);
     try {
-      const ids = Array.from(selectedPosts);
-      const baseDate = new Date(rescheduleDate);
-      
-      // Reschedule each post, spacing them according to post times
-      for (let i = 0; i < ids.length; i += 100) {
-        const batch = ids.slice(i, i + 100);
-        await supabase
-          .from('scheduled_posts')
-          .update({ scheduled_time: baseDate.toISOString() })
-          .in('id', batch);
+      const selected = posts
+        .filter(p => selectedPosts.has(p.id))
+        .sort((a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime());
+
+      // Distribute the selected posts across the campaign's post times starting
+      // on the chosen date, one slot per post, rolling over to the next day.
+      const updates: { id: string; scheduled_time: string }[] = [];
+      if (postTimes.length > 0) {
+        let day = new Date(rescheduleDate);
+        day.setHours(0, 0, 0, 0);
+        let timeIndex = 0;
+
+        for (const post of selected) {
+          const pt = postTimes[timeIndex % postTimes.length];
+          const [hours, minutes] = pt.post_time.split(':').map(Number);
+
+          let finalMinutes = minutes;
+          if (pt.randomize && pt.random_range_minutes) {
+            finalMinutes += Math.floor(Math.random() * (pt.random_range_minutes * 2 + 1)) - pt.random_range_minutes;
+          }
+
+          const slot = zonedWallTimeToUtc(day.getFullYear(), day.getMonth(), day.getDate(), hours, finalMinutes, timezone);
+          updates.push({ id: post.id, scheduled_time: slot.toISOString() });
+          timeIndex++;
+          if (timeIndex % postTimes.length === 0) {
+            day = addDays(day, 1);
+          }
+        }
+      } else {
+        const baseDate = new Date(rescheduleDate);
+        for (const post of selected) {
+          updates.push({ id: post.id, scheduled_time: baseDate.toISOString() });
+        }
       }
-      
-      toast({ title: `Rescheduled ${ids.length} posts` });
+
+      await applyScheduleUpdates(updates);
+
+      toast({ title: `Rescheduled ${updates.length} posts`, description: postTimes.length > 0 ? `Spread across your campaign post times (${timezone})` : undefined });
       setSelectedPosts(new Set());
       setRescheduleDate(undefined);
       await fetchCampaignData();
@@ -675,6 +848,30 @@ export default function CampaignDetail() {
       return;
     }
     
+    const normalizedBrands = watermarkBrands
+      .map((brand) => ({
+        ...brand,
+        name: brand.name.trim(),
+        logoUrl: brand.logoUrl.trim(),
+        caption: brand.caption.trim(),
+        interval: clampBrandInterval(brand.interval),
+      }))
+      .filter((brand) => brand.name || brand.logoUrl || brand.caption);
+
+    if (normalizedBrands.some((brand) => brand.enabled && !brand.logoUrl)) {
+      toast({
+        title: 'Brand logo required',
+        description: 'Each enabled brand entry needs a logo URL.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const parsedAffiliateLinks = affiliateLinksInput
+      .split(/\n+/)
+      .map((link) => link.trim())
+      .filter((link) => link.length > 0);
+
     setSavingCaptionSettings(true);
     try {
       const existingWatermarkSettings =
@@ -683,34 +880,29 @@ export default function CampaignDetail() {
           : {};
       const nextWatermarkSettings = {
         ...existingWatermarkSettings,
+        enabled: normalizedBrands.some((brand) => brand.enabled && brand.logoUrl),
         placement: {
           mode: watermarkMode,
           position: watermarkPosition,
           widthPercent: Math.max(5, Math.min(100, Math.floor(watermarkWidthPercent || 18))),
           heightPercent: Math.max(5, Math.min(100, Math.floor(watermarkHeightPercent || 18))),
         },
+        brands: normalizedBrands,
+      };
+      const nextBrandingLines = {
+        enabled: brandingLinesEnabled,
+        frequency: brandingFrequency,
+        interval: clampBrandInterval(brandingInterval),
+        text: brandingText.trim(),
+      };
+      const nextAffiliateLinks = {
+        enabled: affiliateEnabled,
+        frequency: affiliateFrequency,
+        interval: clampBrandInterval(affiliateInterval),
+        links: parsedAffiliateLinks,
       };
 
-      const { error } = await supabase
-        .from('campaigns')
-        .update({ 
-          template_type: useAIGeneration ? 'ai' : 'manual',
-          custom_caption: useAIGeneration ? null : manualTemplate,
-          caption_length: captionLength,
-          hashtag_count: hashtagCount,
-          youtube_upload_type: youtubeUploadType,
-          youtube_title_language: youtubeTitleLanguage,
-          fallback_captions_enabled: fallbackCaptionsEnabled,
-          fallback_captions: fallbackCaptionsEnabled ? parsedFallbackCaptions : [],
-          logo_opacity: logoOpacity,
-          watermark_settings: nextWatermarkSettings,
-        })
-        .eq('id', id);
-      
-      if (error) throw error;
-      
-      setCampaign({
-        ...campaign,
+      const updatedFields = {
         template_type: useAIGeneration ? 'ai' : 'manual',
         custom_caption: useAIGeneration ? null : manualTemplate,
         caption_length: captionLength,
@@ -721,7 +913,18 @@ export default function CampaignDetail() {
         fallback_captions: fallbackCaptionsEnabled ? parsedFallbackCaptions : [],
         logo_opacity: logoOpacity,
         watermark_settings: nextWatermarkSettings,
-      });
+        branding_lines: nextBrandingLines,
+        affiliate_links: nextAffiliateLinks,
+      };
+
+      const { error } = await supabase
+        .from('campaigns')
+        .update(updatedFields)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setCampaign({ ...campaign, ...updatedFields });
       setShowCaptionSettings(false);
       toast({ 
         title: 'Caption Settings Saved',
@@ -760,6 +963,51 @@ export default function CampaignDetail() {
       toast({ title: 'Failed to update campaign', variant: 'destructive' });
     } finally {
       setTogglingPause(false);
+    }
+  };
+
+  // Convert a wall-clock time in a timezone to the corresponding UTC instant.
+  // Two-pass adjustment handles minute-offset zones (e.g. IST, UTC+5:30) and DST.
+  const zonedWallTimeToUtc = (
+    year: number,
+    monthIndex: number,
+    day: number,
+    hours: number,
+    minutes: number,
+    tz: string
+  ): Date => {
+    const target = Date.UTC(year, monthIndex, day, hours, minutes, 0);
+    let utc = target;
+    for (let i = 0; i < 2; i++) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).formatToParts(new Date(utc));
+      const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10);
+      const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+      utc += target - asUtc;
+    }
+    return new Date(utc);
+  };
+
+  // Apply scheduled_time updates in parallel chunks instead of one-by-one.
+  const applyScheduleUpdates = async (updates: { id: string; scheduled_time: string }[]) => {
+    const CHUNK = 25;
+    for (let i = 0; i < updates.length; i += CHUNK) {
+      await Promise.all(
+        updates.slice(i, i + CHUNK).map((update) =>
+          supabase
+            .from('scheduled_posts')
+            .update({ scheduled_time: update.scheduled_time })
+            .eq('id', update.id)
+        )
+      );
     }
   };
 
@@ -815,63 +1063,31 @@ export default function CampaignDetail() {
       for (const post of sortedPosts) {
         const postTime = postTimes[timeIndex % postTimes.length];
         const [hours, minutes] = postTime.post_time.split(':').map(Number);
-        
-        // Create date in the selected timezone
-        const year = currentDay.getFullYear();
-        const month = currentDay.getMonth();
-        const day = currentDay.getDate();
-        
-        // Build ISO string for the target timezone
-        const targetDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        
-        // Parse in timezone using formatter trick
-        const formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: timezone,
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        });
-        
-        // Calculate UTC offset for the timezone
-        const testDate = new Date(`${targetDateStr}Z`);
-        const tzParts = formatter.formatToParts(testDate);
-        const getTzPart = (type: string) => tzParts.find(p => p.type === type)?.value || '0';
-        const tzHour = parseInt(getTzPart('hour'));
-        const offsetHours = tzHour - testDate.getUTCHours();
-        
-        // Create the final date with offset
+
         let finalMinutes = minutes;
-        
-        // Apply randomization if enabled
         if (postTime.randomize && postTime.random_range_minutes) {
-          const offset = Math.floor(Math.random() * (postTime.random_range_minutes * 2 + 1)) - postTime.random_range_minutes;
-          finalMinutes += offset;
+          finalMinutes += Math.floor(Math.random() * (postTime.random_range_minutes * 2 + 1)) - postTime.random_range_minutes;
         }
-        
-        const scheduledDate = new Date(Date.UTC(year, month, day, hours - offsetHours, finalMinutes, 0));
-        
+
+        const scheduledDate = zonedWallTimeToUtc(
+          currentDay.getFullYear(),
+          currentDay.getMonth(),
+          currentDay.getDate(),
+          hours,
+          finalMinutes,
+          timezone
+        );
+
         updates.push({ id: post.id, scheduled_time: scheduledDate.toISOString() });
-        
+
         timeIndex++;
         // Move to next day after using all time slots
         if (timeIndex % postTimes.length === 0) {
           currentDay = addDays(currentDay, 1);
         }
       }
-      
-      // Batch update
-      for (let i = 0; i < updates.length; i += 100) {
-        const batch = updates.slice(i, i + 100);
-        for (const update of batch) {
-          await supabase
-            .from('scheduled_posts')
-            .update({ scheduled_time: update.scheduled_time })
-            .eq('id', update.id);
-        }
-      }
+
+      await applyScheduleUpdates(updates);
 
       toast({ title: `Rescheduled ${updates.length} posts`, description: `Starting from tomorrow (${timezone})` });
       // Refresh in the background so the button spinner doesn't look stuck on large campaigns
@@ -1226,7 +1442,7 @@ export default function CampaignDetail() {
                 <span className="text-xs font-medium text-foreground">Caption</span>
               </button>
             </DialogTrigger>
-            <DialogContent className="max-w-sm">
+            <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Campaign Content & Watermark Settings</DialogTitle>
               </DialogHeader>
@@ -1404,7 +1620,177 @@ export default function CampaignDetail() {
                     </div>
                   </div>
                 )}
-                
+
+                {/* Branding line in captions */}
+                <div className="space-y-3 rounded-md border p-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Branding line in captions</Label>
+                    <Switch checked={brandingLinesEnabled} onCheckedChange={setBrandingLinesEnabled} />
+                  </div>
+                  {brandingLinesEnabled && (
+                    <div className="space-y-2">
+                      <Input
+                        value={brandingText}
+                        onChange={(e) => setBrandingText(e.target.value)}
+                        placeholder="e.g. DM for credit/removal"
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <Select value={brandingFrequency} onValueChange={(v) => setBrandingFrequency(v as FrequencyMode)}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-background border z-50">
+                            <SelectItem value="every">Every post</SelectItem>
+                            <SelectItem value="every_n">Every Nth post</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {brandingFrequency === 'every_n' && (
+                          <Input
+                            type="number"
+                            min={2}
+                            max={5}
+                            value={brandingInterval}
+                            onChange={(e) => setBrandingInterval(clampBrandInterval(Number(e.target.value)))}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Affiliate links in captions */}
+                <div className="space-y-3 rounded-md border p-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Affiliate links in captions</Label>
+                    <Switch checked={affiliateEnabled} onCheckedChange={setAffiliateEnabled} />
+                  </div>
+                  {affiliateEnabled && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={affiliateLinksInput}
+                        onChange={(e) => setAffiliateLinksInput(e.target.value)}
+                        rows={3}
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                        placeholder={'https://link-one.example\nhttps://link-two.example'}
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <Select value={affiliateFrequency} onValueChange={(v) => setAffiliateFrequency(v as FrequencyMode)}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-background border z-50">
+                            <SelectItem value="every">Every post</SelectItem>
+                            <SelectItem value="every_n">Every Nth post</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {affiliateFrequency === 'every_n' && (
+                          <Input
+                            type="number"
+                            min={2}
+                            max={5}
+                            value={affiliateInterval}
+                            onChange={(e) => setAffiliateInterval(clampBrandInterval(Number(e.target.value)))}
+                          />
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Links rotate one per post.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Brand watermarks */}
+                <div className="space-y-3 rounded-md border p-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Brand watermarks</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={watermarkBrands.length >= MAX_BRANDS}
+                      onClick={() =>
+                        setWatermarkBrands((prev) => [
+                          ...prev,
+                          {
+                            id: `brand-${Date.now()}-${prev.length}`,
+                            name: '',
+                            logoUrl: '',
+                            caption: '',
+                            enabled: true,
+                            frequency: 'every',
+                            interval: 3,
+                          },
+                        ])
+                      }
+                    >
+                      Add ({watermarkBrands.length}/{MAX_BRANDS})
+                    </Button>
+                  </div>
+                  {watermarkBrands.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      No brands configured. Each brand can have its own logo, caption line, and frequency.
+                    </p>
+                  )}
+                  {watermarkBrands.map((brand, index) => (
+                    <div key={brand.id} className="space-y-2 rounded-md border p-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Brand {index + 1}</span>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={brand.enabled}
+                            onCheckedChange={(checked) => updateWatermarkBrand(brand.id, { enabled: checked })}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setWatermarkBrands((prev) => prev.filter((b) => b.id !== brand.id))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                      <Input
+                        value={brand.name}
+                        onChange={(e) => updateWatermarkBrand(brand.id, { name: e.target.value })}
+                        placeholder="Brand name"
+                      />
+                      <Input
+                        value={brand.logoUrl}
+                        onChange={(e) => updateWatermarkBrand(brand.id, { logoUrl: e.target.value })}
+                        placeholder="Logo URL (required when enabled)"
+                      />
+                      <Input
+                        value={brand.caption}
+                        onChange={(e) => updateWatermarkBrand(brand.id, { caption: e.target.value })}
+                        placeholder="Caption line appended for this brand (optional)"
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <Select
+                          value={brand.frequency}
+                          onValueChange={(v) => updateWatermarkBrand(brand.id, { frequency: v as FrequencyMode })}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-background border z-50">
+                            <SelectItem value="every">Every reel</SelectItem>
+                            <SelectItem value="every_n">Every Nth reel</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {brand.frequency === 'every_n' && (
+                          <Input
+                            type="number"
+                            min={2}
+                            max={5}
+                            value={brand.interval}
+                            onChange={(e) => updateWatermarkBrand(brand.id, { interval: clampBrandInterval(Number(e.target.value)) })}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 {/* Current settings display */}
                 <div className="p-3 rounded-lg bg-muted text-xs">
                   <p><strong>Current:</strong> {campaign?.caption_length || 'medium'} captions, {campaign?.hashtag_count || 8} hashtags</p>
@@ -1428,6 +1814,7 @@ export default function CampaignDetail() {
             <button
               onClick={handleSyncFolder}
               disabled={isSyncingFolder}
+              title="Sync folder video count"
               className="flex items-center justify-center gap-2 p-2 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
             >
               {isSyncingFolder ? (
@@ -1438,6 +1825,28 @@ export default function CampaignDetail() {
             </button>
           )}
         </div>
+
+        {/* Folder sync result + schedule new videos */}
+        {(campaign.drive_folder_id || (campaign.video_links?.length ?? 0) > 0) && (
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-secondary/50 text-sm">
+            <span className="text-muted-foreground">
+              {folderSync
+                ? `${folderSync.videoCount} videos in ${folderSync.foldersScanned} folder(s). New videos can be scheduled below.`
+                : 'Added new videos to this campaign? Schedule them without recreating the campaign.'}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleGenerateSchedule}
+              disabled={generatingSchedule}
+            >
+              {generatingSchedule ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              Schedule new videos
+            </Button>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1">
