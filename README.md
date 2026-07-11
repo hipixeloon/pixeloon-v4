@@ -2,7 +2,9 @@
 
 Pixeloon is an automated social media campaign management platform that enables users to schedule and publish video content across Facebook, Instagram, and YouTube with AI-generated captions.
 
-> **📖 New here? Follow the [Complete Production Setup Guide](docs/SETUP.md)** — it covers the Supabase deployment (migrations, edge functions, cron), the frontend, and the per-user API keys (Gemini, Google Drive service account, Facebook App, YouTube OAuth) step by step, plus a verification checklist and troubleshooting table.
+> **🚀 Want it live for free?** Follow **[docs/DEPLOY-FREE.md](docs/DEPLOY-FREE.md)** — upload to your GitHub, host on Cloudflare Pages, run the backend on Supabase, and attach a custom domain, all on free tiers.
+>
+> **📖 Full configuration reference:** **[docs/SETUP.md](docs/SETUP.md)** — Supabase deployment (migrations, edge functions, cron) and the per-user API keys (Gemini, Google Drive service account, Facebook App, YouTube OAuth), with a verification checklist and troubleshooting table.
 
 ## Features
 
@@ -143,19 +145,26 @@ Pixeloon is an automated social media campaign management platform that enables 
 | `list-folder-videos` | Lists videos from Google Drive folders |
 | `validate-drive-links` | Validates Google Drive video links |
 
-## Environment Variables
+## Configuration
 
-### Supabase Secrets (Edge Functions)
-- `SUPABASE_URL` - Supabase project URL
-- `SUPABASE_ANON_KEY` - Supabase anon key
-- `SUPABASE_SERVICE_ROLE_KEY` - Service role key for admin operations
-- `FACEBOOK_APP_ID` - Facebook app ID
-- `FACEBOOK_APP_SECRET` - Facebook app secret
-- `YOUTUBE_CLIENT_ID` - YouTube OAuth client ID
-- `YOUTUBE_CLIENT_SECRET` - YouTube OAuth client secret
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Google service account email
-- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` - Google service account key
-- `GOOGLE_GEMINI_API_KEY` - Gemini API key for AI features
+### Frontend environment variables (`.env` locally / Cloudflare Pages env vars)
+- `VITE_SUPABASE_URL` - Supabase project URL
+- `VITE_SUPABASE_PUBLISHABLE_KEY` - Supabase anon/publishable key
+- `VITE_SUPABASE_PROJECT_ID` - Supabase project ref
+
+### Supabase function secrets (deployment-level, optional)
+- `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` - logo watermarking on videos
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` - folder video-count preview only
+
+(`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected into edge functions automatically.)
+
+### Per-user API keys (each user sets their own in **Settings → API Keys**)
+- **Gemini API key** - AI caption generation
+- **Google Drive service account** (email + private key) - reading campaign videos; required for posting
+- **Facebook App ID + Secret** - Facebook/Instagram OAuth and publishing
+- **YouTube OAuth Client ID + Secret** - YouTube uploads
+
+Every user runs on their own keys — nothing is shared between accounts. See [docs/SETUP.md](docs/SETUP.md) Part 2 for exact steps to obtain each key.
 
 ## Getting Started
 
@@ -187,9 +196,12 @@ The app will be available at `http://localhost:8080`
 ### Supabase Setup
 
 1. Create a new Supabase project
-2. Run the migrations in `supabase/migrations/`
-3. Configure the edge function secrets
-4. Deploy edge functions
+2. `supabase link --project-ref <ref>` then `supabase db push` (applies all migrations in `supabase/migrations/`)
+3. Deploy the edge functions (`supabase functions deploy …`)
+4. Create the auto-poster cron job pointing at your project (SQL in [docs/SETUP.md](docs/SETUP.md) §1.3)
+5. Optionally set the Cloudinary secrets for watermarking
+
+Full details with copy-paste commands: [docs/SETUP.md](docs/SETUP.md).
 
 ## Development
 
@@ -225,19 +237,18 @@ npm run lint
 
 ## Deployment
 
-### Deploy with Lovable
-1. Open your project in Lovable
-2. Click **Share → Publish** in the top right
-3. Your app will be live at `yourproject.lovable.app`
+### Recommended: free stack (GitHub + Cloudflare Pages + Supabase + custom domain)
 
-### Self-Hosting
-The project can be deployed to any static hosting service:
+Follow the step-by-step guide in **[docs/DEPLOY-FREE.md](docs/DEPLOY-FREE.md)**:
 
-```bash
-npm run build
-```
+1. Push this repo to your own GitHub
+2. Connect the repo to **Cloudflare Pages** (build `npm run build`, output `dist`, set the `VITE_*` env vars) — every push auto-deploys
+3. Run the backend on a free **Supabase** project (migrations + edge functions + cron)
+4. Attach your **custom domain** in Cloudflare with automatic HTTPS
 
-Deploy the `dist` folder to Vercel, Netlify, Cloudflare Pages, or any static hosting provider.
+### Other static hosts
+
+The frontend is a static Vite build — `npm run build` and deploy the `dist` folder to Vercel, Netlify, or any static host. Set the `VITE_*` environment variables in the host's dashboard, and make sure all routes fall back to `index.html` (a `public/_redirects` file is included for Cloudflare/Netlify).
 
 ## License
 
