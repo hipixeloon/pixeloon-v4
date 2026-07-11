@@ -326,14 +326,16 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    let resolvedUserId = bodyUserId
-    if (!resolvedUserId) {
-      const authHeader = req.headers.get('Authorization')
-      if (authHeader) {
-        const token = authHeader.replace('Bearer ', '')
-        const { data: { user } } = await supabase.auth.getUser(token)
-        resolvedUserId = user?.id
-      }
+    // The user's JWT is authoritative; a userId in the body is only trusted for
+    // internal service-role calls (prevents using another user's API keys).
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    const isServiceCall = !!bearer && bearer === supabaseKey
+    let resolvedUserId: string | undefined
+    if (isServiceCall) {
+      resolvedUserId = bodyUserId
+    } else if (bearer) {
+      const { data: { user } } = await supabase.auth.getUser(bearer)
+      resolvedUserId = user?.id
     }
 
     // Require per-user Gemini key

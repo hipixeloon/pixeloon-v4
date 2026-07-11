@@ -39,15 +39,16 @@ serve(async (req) => {
       );
     }
 
-    // Identify user
-    let userId = bodyUserId;
-    if (!userId) {
-      const authHeader = req.headers.get('Authorization')
-      if (authHeader) {
-        const token = authHeader.replace('Bearer ', '')
-        const { data: { user } } = await supabase.auth.getUser(token)
-        userId = user?.id
-      }
+    // Identify user. The JWT is authoritative; a userId in the body is only
+    // trusted for internal service-role calls (prevents using another user's keys).
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    const isServiceCall = !!bearer && bearer === supabaseKey
+    let userId: string | undefined
+    if (isServiceCall) {
+      userId = bodyUserId
+    } else if (bearer) {
+      const { data: { user } } = await supabase.auth.getUser(bearer)
+      userId = user?.id
     }
 
     // Require user-specific Gemini key

@@ -1143,6 +1143,29 @@ serve(async (req) => {
     let pendingPosts: ScheduledPost[] = []
 
     if (requestBody.postId) {
+      // Authorization: targeting a specific post requires the campaign owner's
+      // JWT (or an internal service-role call). The scheduled cron path below
+      // takes no caller input, so it stays callable without a user identity.
+      const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+      const isServiceCall = !!bearer && bearer === supabaseKey
+      if (!isServiceCall) {
+        const { data: { user } } = bearer
+          ? await supabase.auth.getUser(bearer)
+          : { data: { user: null } }
+        if (!user) {
+          return new Response(JSON.stringify({ error: 'Not authorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
+        const { data: targetPost } = await supabase
+          .from('scheduled_posts')
+          .select('id, campaigns!inner(user_id)')
+          .eq('id', requestBody.postId)
+          .maybeSingle()
+        const ownerId = (targetPost as { campaigns?: { user_id?: string } } | null)?.campaigns?.user_id
+        if (!targetPost || ownerId !== user.id) {
+          return new Response(JSON.stringify({ error: 'Not authorized for this post' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
+      }
+
       // Process specific post (for "Post Now" - marked as 'processing' by the client).
       // Atomically claim it by stamping processing_started_at so a double-click or a
       // duplicate invocation can never process the same post twice.

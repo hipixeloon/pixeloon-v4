@@ -54,18 +54,27 @@ serve(async (req) => {
       }
     }
 
-    // Try to get userId from body or Authorization header (Supabase JWT)
-    let userId = parsedBody?.userId
-    if (!userId) {
-      const authHeader = req.headers.get('Authorization')
-      if (authHeader) {
-        const token = authHeader.replace('Bearer ', '')
-        const { data: { user } } = await createClient(supabaseUrl, supabaseServiceKey).auth.getUser(token)
-        userId = user?.id
-      }
-    }
-
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // Resolve caller identity. The user's JWT is authoritative; a userId in the
+    // body is only trusted for internal service-role calls (e.g. the auto-poster
+    // refreshing tokens). This prevents anonymous callers from using another
+    // user's stored OAuth credentials.
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    const isServiceCall = !!bearer && bearer === supabaseServiceKey
+    let userId: string | undefined
+    if (isServiceCall) {
+      userId = parsedBody?.userId
+    } else if (bearer) {
+      const { data: { user } } = await supabase.auth.getUser(bearer)
+      userId = user?.id
+    }
+    if (!isServiceCall && parsedBody?.userId && parsedBody.userId !== userId) {
+      return new Response(
+        JSON.stringify({ error: 'userId does not match the authenticated user' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
     const getUserApiKey = async (uid: string, keyName: string): Promise<string | null> => {
       const { data } = await supabase
@@ -122,7 +131,7 @@ serve(async (req) => {
     if (action === 'exchange-token') {
       const body = parsedBody ?? await req.json()
       const { code, redirectUri } = body
-      const resolvedUserId = body.userId || userId
+      const resolvedUserId = userId
 
       if (!code || !redirectUri || !resolvedUserId) {
         return new Response(
@@ -216,7 +225,7 @@ serve(async (req) => {
     if (action === 'refresh-token') {
       const body = parsedBody ?? await req.json()
       const { refreshToken } = body
-      const resolvedUserId = body.userId || userId
+      const resolvedUserId = userId
 
       if (!refreshToken || !resolvedUserId) {
         return new Response(

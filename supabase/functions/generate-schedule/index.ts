@@ -478,6 +478,22 @@ Deno.serve(async (req) => {
       throw new Error('Campaign not found')
     }
 
+    // Authorization: only the campaign owner (user JWT) or an internal
+    // service-role call may generate schedules for a campaign.
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    const isServiceCall = !!bearer && bearer === supabaseServiceKey
+    if (!isServiceCall) {
+      const { data: { user } } = bearer
+        ? await supabase.auth.getUser(bearer)
+        : { data: { user: null } }
+      if (!user || user.id !== campaign.user_id) {
+        return new Response(
+          JSON.stringify({ error: 'Not authorized to generate a schedule for this campaign' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
+
     // Acquire a generation lease so two concurrent invocations (double-click,
     // retried request) can't both insert the same videos. The lease self-expires
     // after 10 minutes in case a previous run crashed without releasing it.

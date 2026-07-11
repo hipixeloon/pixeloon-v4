@@ -225,18 +225,26 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Try to get userId from body or Authorization header (Supabase JWT)
-    let userId = parsedBody?.userId
-    if (!userId) {
-      const authHeader = req.headers.get('Authorization')
-      if (authHeader) {
-        const token = authHeader.replace('Bearer ', '')
-        const { data: { user } } = await createClient(supabaseUrl, supabaseServiceKey).auth.getUser(token)
-        userId = user?.id
-      }
-    }
-
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // Resolve caller identity. The user's JWT is authoritative; a userId in the
+    // body is only trusted for internal service-role calls. This prevents any
+    // anonymous caller from acting on another user's stored tokens/keys.
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    const isServiceCall = !!bearer && bearer === supabaseServiceKey
+    let userId: string | undefined
+    if (isServiceCall) {
+      userId = parsedBody?.userId
+    } else if (bearer) {
+      const { data: { user } } = await supabase.auth.getUser(bearer)
+      userId = user?.id
+    }
+    if (!isServiceCall && parsedBody?.userId && parsedBody.userId !== userId) {
+      return new Response(
+        JSON.stringify({ error: 'userId does not match the authenticated user' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
     const getUserApiKey = async (uid: string, keyName: string): Promise<string | null> => {
       const { data } = await supabase
@@ -287,7 +295,7 @@ Deno.serve(async (req) => {
 
     if (action === 'exchange-token') {
       const body = parsedBody ?? await req.json()
-      const { code, redirectUri, userId } = body
+      const { code, redirectUri } = body
 
       if (!code || !redirectUri || !userId) {
         return new Response(
@@ -370,9 +378,6 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'sync-pages') {
-      const body = parsedBody ?? await req.json()
-      const { userId } = body
-
       if (!userId) {
         return new Response(
           JSON.stringify({ error: 'Missing userId' }),

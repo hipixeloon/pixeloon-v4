@@ -67,9 +67,13 @@ export function useFacebookPages(userId: string | undefined) {
       localStorage.setItem('fb_connect_user_id', userId);
       const redirectUri = `${window.location.origin}/facebook-callback`;
 
+      const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(
         `${SUPABASE_URL}/functions/v1/facebook-oauth?action=get-auth-url&redirect_uri=${encodeURIComponent(redirectUri)}`,
-        { method: 'GET' }
+        {
+          method: 'GET',
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        }
       );
 
       const data = await response.json();
@@ -94,11 +98,15 @@ export function useFacebookPages(userId: string | undefined) {
     try {
       const redirectUri = `${window.location.origin}/facebook-callback`;
 
+      const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(
         `${SUPABASE_URL}/functions/v1/facebook-oauth?action=exchange-token`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
           body: JSON.stringify({
             code,
             redirectUri,

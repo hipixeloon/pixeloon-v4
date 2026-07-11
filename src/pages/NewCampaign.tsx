@@ -586,11 +586,15 @@ export default function NewCampaign() {
       if (timesError) throw timesError;
 
       // 4. Generate scheduled posts - schedule ALL videos from folder
+      const { data: { session } } = await supabase.auth.getSession();
       const scheduleResponse = await fetch(
         `${SUPABASE_URL}/functions/v1/generate-schedule`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
           body: JSON.stringify({ 
             campaignId: campaign.id, 
             scheduleAllVideos: true, // Schedule every video in the folder

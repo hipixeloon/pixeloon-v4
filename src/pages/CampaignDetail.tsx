@@ -490,6 +490,15 @@ export default function CampaignDetail() {
     setWatermarkBrands((prev) => prev.map((b) => (b.id === brandId ? { ...b, ...patch } : b)));
   };
 
+  // Authenticated headers for direct edge-function calls.
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      'Content-Type': 'application/json',
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    };
+  };
+
   // Schedule any videos in the campaign source that aren't scheduled yet.
   // The generate-schedule function skips already-scheduled videos, so this is
   // safe to run repeatedly (e.g. after adding new videos to the Drive folder).
@@ -500,7 +509,7 @@ export default function CampaignDetail() {
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/generate-schedule`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
           campaignId: campaign.id,
           scheduleAllVideos: true,
@@ -613,7 +622,7 @@ export default function CampaignDetail() {
 
       const response = await fetch(`${SUPABASE_URL}/functions/v1/auto-poster`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({ postId, forcePublic: true }),
       });
 
