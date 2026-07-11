@@ -886,6 +886,15 @@ export default function CampaignDetail() {
       return;
     }
 
+    if (thumbnailMode === 'fixed' && !thumbnailUrl.trim()) {
+      toast({
+        title: 'Thumbnail image missing',
+        description: 'Paste an image link or upload a file, or switch the thumbnail mode.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const parsedAffiliateLinks = affiliateLinksInput
       .split(/\n+/)
       .map((link) => link.trim())
