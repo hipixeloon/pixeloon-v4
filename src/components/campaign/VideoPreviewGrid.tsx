@@ -3,7 +3,7 @@ import { X, Play, Video, ChevronDown, ChevronUp, Download, Loader2, CheckCircle,
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-const SUPABASE_URL = 'https://jtsopnmudnvyqvlaptof.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 interface VideoPreviewGridProps {
   videoLinks: string[];
