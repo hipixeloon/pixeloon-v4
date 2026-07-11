@@ -269,7 +269,15 @@ before you sell/scale:
 
 ## Part 4 — Verification checklist
 
-After setup, verify each item:
+Quick automated pass (checks connectivity, migrations, storage, RLS, functions):
+
+```bash
+SUPABASE_URL=https://<project-ref>.supabase.co \
+SUPABASE_ANON_KEY=<anon-key> \
+node scripts/prod-selftest.mjs
+```
+
+Then verify each item:
 
 - [ ] `select * from cron.job;` shows `auto-poster-cron` active for **your** URL
 - [ ] Settings shows "API key configured" for Gemini (or fallback captions set)

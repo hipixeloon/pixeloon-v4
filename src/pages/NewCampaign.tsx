@@ -456,6 +456,15 @@ export default function NewCampaign() {
       return;
     }
 
+    if (selectedYouTubeChannelIds.length > 0 && thumbnailMode === 'fixed' && !thumbnailUrl.trim()) {
+      toast({
+        title: 'Thumbnail image missing',
+        description: 'Paste an image link or upload a file, or switch the thumbnail mode.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsSaving(true);
 
     try {
