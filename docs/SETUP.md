@@ -204,7 +204,17 @@ control position/size/opacity (requires the deployment's Cloudinary secrets).
 4. Choose AI captions or a manual caption template; set fallback captions,
    branding line, affiliate links, watermark brands, YouTube Shorts/long-form
    and title language as needed.
-5. Create — the schedule is generated automatically for **all** videos, skipping
+5. **YouTube thumbnail** (optional, when YouTube channels are selected):
+   - **Default** — YouTube picks a frame.
+   - **Auto-generate** — a thumbnail is generated from each video's own frame
+     for every future video. Toggle *Add title text* to overlay the title in a
+     clean band (needs the deployment's Cloudinary secrets).
+   - **Fixed** — one image for all videos: paste an image link or upload a file
+     (JPG/PNG, under 2 MB). Custom thumbnails apply to long-form uploads;
+     YouTube uses its own for Shorts.
+6. **YouTube length category**: *Auto* (vertical/square ≤ 3 min → Shorts, else
+   long-form), or force *Shorts* / *Long-form* for every video.
+7. Create — the schedule is generated automatically for **all** videos, skipping
    any already scheduled.
 
 Ongoing management from the campaign page:

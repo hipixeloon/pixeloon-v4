@@ -11,6 +11,7 @@ import { PlatformSelect } from '@/components/campaign/PlatformSelect';
 import { ScheduleConfig, PostTime } from '@/components/campaign/ScheduleConfig';
 import { BulkLinkExtractor } from '@/components/campaign/BulkLinkExtractor';
 import { VideoPreviewGrid } from '@/components/campaign/VideoPreviewGrid';
+import { YouTubeThumbnailSettings, ThumbnailMode } from '@/components/campaign/YouTubeThumbnailSettings';
 import { usePlatformConnections } from '@/hooks/usePlatformConnections';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRoles } from '@/hooks/useUserRoles';
@@ -148,6 +149,9 @@ export default function NewCampaign() {
   // YouTube upload type
   const [youtubeUploadType, setYoutubeUploadType] = useState<'auto' | 'shorts' | 'long_form'>('auto');
   const [youtubeTitleLanguage, setYoutubeTitleLanguage] = useState<'english' | 'hinglish' | 'hindi'>('english');
+  const [thumbnailMode, setThumbnailMode] = useState<ThumbnailMode>('none');
+  const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [thumbnailTitleOverlay, setThumbnailTitleOverlay] = useState(false);
 
   // Branding logo opacity (0-100)
   const [logoOpacity, setLogoOpacity] = useState(80);
@@ -481,6 +485,9 @@ export default function NewCampaign() {
       if (selectedYouTubeChannelIds.length > 0) {
         campaignData.youtube_upload_type = youtubeUploadType;
         campaignData.youtube_title_language = youtubeTitleLanguage;
+        campaignData.youtube_thumbnail_mode = thumbnailMode;
+        campaignData.youtube_thumbnail_url = thumbnailMode === 'fixed' ? thumbnailUrl.trim() : null;
+        campaignData.youtube_thumbnail_title_overlay = thumbnailMode === 'auto' ? thumbnailTitleOverlay : false;
       }
 
       // Logo opacity for watermarking
@@ -1076,11 +1083,22 @@ https://drive.google.com/file/d/def456/view"
                 <div className="flex items-start gap-2">
                   <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                   <div className="text-xs text-muted-foreground space-y-1">
-                    {youtubeUploadType === 'auto' && <p>Duration ≤60s → Shorts; &gt;60s → Long-form. <strong>#Shorts</strong> tag added automatically.</p>}
+                    {youtubeUploadType === 'auto' && <p>Vertical/square videos ≤3 min → Shorts; everything else → Long-form. <strong>#Shorts</strong> tag added automatically.</p>}
                     {youtubeUploadType === 'shorts' && <p>All videos uploaded as <strong>YouTube Shorts</strong>. <strong>#Shorts</strong> tag is added to every post automatically.</p>}
                     {youtubeUploadType === 'long_form' && <p>All videos uploaded as standard <strong>long-form YouTube videos</strong>. Use this for full-length content.</p>}
                   </div>
                 </div>
+              </div>
+              <div className="border-t border-border pt-3">
+                <YouTubeThumbnailSettings
+                  mode={thumbnailMode}
+                  setMode={setThumbnailMode}
+                  url={thumbnailUrl}
+                  setUrl={setThumbnailUrl}
+                  titleOverlay={thumbnailTitleOverlay}
+                  setTitleOverlay={setThumbnailTitleOverlay}
+                />
+                <p className="text-xs text-muted-foreground mt-2">Custom thumbnails apply to long-form uploads (YouTube uses its own for Shorts).</p>
               </div>
             </div>
           </section>

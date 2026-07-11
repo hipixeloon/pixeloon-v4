@@ -357,6 +357,9 @@ export type Database = {
           fallback_captions: string[] | null
           schedule_generating_at: string | null
           youtube_title_language: string | null
+          youtube_thumbnail_mode: string
+          youtube_thumbnail_url: string | null
+          youtube_thumbnail_title_overlay: boolean
         }
         Insert: {
           caption_length?: string | null
@@ -393,6 +396,9 @@ export type Database = {
           fallback_captions?: string[] | null
           schedule_generating_at?: string | null
           youtube_title_language?: string | null
+          youtube_thumbnail_mode?: string
+          youtube_thumbnail_url?: string | null
+          youtube_thumbnail_title_overlay?: boolean
         }
         Update: {
           caption_length?: string | null
@@ -429,6 +435,9 @@ export type Database = {
           fallback_captions?: string[] | null
           schedule_generating_at?: string | null
           youtube_title_language?: string | null
+          youtube_thumbnail_mode?: string
+          youtube_thumbnail_url?: string | null
+          youtube_thumbnail_title_overlay?: boolean
         }
         Relationships: []
       }

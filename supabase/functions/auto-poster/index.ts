@@ -821,6 +821,127 @@ async function getVideoThumbnailBase64(fileId: string, accessToken: string): Pro
   }
 }
 
+// ============ YouTube Thumbnail Resolution ============
+
+interface YouTubeThumbnailConfig {
+  youtube_thumbnail_mode?: string | null
+  youtube_thumbnail_url?: string | null
+  youtube_thumbnail_title_overlay?: boolean | null
+}
+
+async function fetchImageAsBlob(url: string): Promise<Blob | null> {
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) {
+      console.log(`Thumbnail image fetch failed: ${resp.status}`)
+      return null
+    }
+    const blob = await resp.blob()
+    if (!blob.type.startsWith('image/') && blob.type !== '') {
+      console.log(`Thumbnail URL is not an image (${blob.type})`)
+      return null
+    }
+    return blob
+  } catch (err) {
+    console.log('Thumbnail image fetch exception:', String(err))
+    return null
+  }
+}
+
+// Grab a high-resolution still frame from the video via Google Drive's own
+// generated thumbnail (free, no transcoding needed).
+async function getDriveFrameBlob(fileId: string, accessToken: string): Promise<Blob | null> {
+  try {
+    const metadataUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=thumbnailLink`
+    const resp = await fetch(metadataUrl, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    if (!data.thumbnailLink) return null
+    const highRes = data.thumbnailLink.replace(/=s\d+$/, '=s1280').replace('=s220', '=s1280')
+    const frameResp = await fetch(highRes)
+    if (!frameResp.ok) return null
+    return await frameResp.blob()
+  } catch (err) {
+    console.log('Drive frame fetch exception:', String(err))
+    return null
+  }
+}
+
+// Optional: overlay a clean title band on the frame via Cloudinary. Best-effort —
+// returns the original frame unchanged if Cloudinary is not configured or fails.
+async function overlayTitleOnThumbnail(imageBlob: Blob, title: string): Promise<Blob> {
+  const cloudName = Deno.env.get('CLOUDINARY_CLOUD_NAME')
+  const apiKey = Deno.env.get('CLOUDINARY_API_KEY')
+  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET')
+  if (!cloudName || !apiKey || !apiSecret) return imageBlob
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000)
+    const signature = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(`timestamp=${timestamp}${apiSecret}`))
+      .then(hash => Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join(''))
+
+    const form = new FormData()
+    form.append('file', imageBlob)
+    form.append('timestamp', String(timestamp))
+    form.append('api_key', apiKey)
+    form.append('signature', signature)
+
+    const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: form })
+    if (!up.ok) return imageBlob
+    const data = await up.json()
+    const publicId = data.public_id
+
+    // Sanitize the title to plain text so it is safe inside a Cloudinary URL.
+    const clean = title.replace(/[^\p{L}\p{N} !?.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 55)
+    if (!clean) return imageBlob
+    const encoded = encodeURIComponent(clean)
+
+    // 1280x720 fill, then a bold white title in a translucent dark band at the bottom.
+    const transform = [
+      'c_fill,w_1280,h_720,g_auto',
+      `l_text:Arial_74_bold:${encoded},co_white,b_rgb:000000B3,bo_24px_solid_rgb:000000B3,c_fit,w_1120,g_south,y_48`,
+    ].join('/')
+    const finalUrl = `https://res.cloudinary.com/${cloudName}/image/upload/${transform}/${publicId}.jpg`
+
+    const final = await fetch(finalUrl)
+    if (!final.ok) {
+      console.log(`Thumbnail overlay render failed (non-fatal): ${final.status}`)
+      return imageBlob
+    }
+    return await final.blob()
+  } catch (err) {
+    console.log('Thumbnail overlay exception (non-fatal):', String(err))
+    return imageBlob
+  }
+}
+
+// Resolve the thumbnail blob to send to YouTube for this post, or null to let
+// YouTube auto-pick a frame.
+async function resolveYouTubeThumbnail(
+  campaign: YouTubeThumbnailConfig | null | undefined,
+  fileId: string | null,
+  driveAccessToken: string,
+  title: string
+): Promise<Blob | null> {
+  const mode = campaign?.youtube_thumbnail_mode || 'none'
+  if (mode === 'none') return null
+
+  if (mode === 'fixed') {
+    const url = campaign?.youtube_thumbnail_url?.trim()
+    if (!url) return null
+    return await fetchImageAsBlob(url)
+  }
+
+  // mode === 'auto': generate from the video's own frame
+  if (!fileId) return null
+  const frame = await getDriveFrameBlob(fileId, driveAccessToken)
+  if (!frame) return null
+  if (campaign?.youtube_thumbnail_title_overlay) {
+    return await overlayTitleOnThumbnail(frame, title)
+  }
+  return frame
+}
+
 function getCampaignFallbackCaptions(campaign: Record<string, unknown> | null | undefined): string[] {
   if (!campaign || campaign['fallback_captions_enabled'] !== true) return []
   const raw = campaign['fallback_captions']
@@ -1444,8 +1565,14 @@ serve(async (req) => {
         }
 
         // Determine isShort for YouTube based on campaign youtube_upload_type:
-        // 'shorts' → always short, 'long_form' → always long, 'auto' → use video duration
-        let isYouTubeShort = videoResult.isReel
+        // 'shorts' → always short, 'long_form' → always long, 'auto' → categorize by
+        // YouTube's own Shorts criteria (vertical/square AND ≤ 3 minutes), which is
+        // more permissive than the 90s Facebook/Instagram Reel threshold.
+        const ytDurationSec = videoResult.metadata.durationMillis ? videoResult.metadata.durationMillis / 1000 : 0
+        const ytIsVerticalOrSquare = videoResult.originalAspectRatio <= 1.0
+        const YOUTUBE_SHORT_MAX_SECONDS = 180
+        const youtubeShortEligible = ytDurationSec > 0 && ytDurationSec <= YOUTUBE_SHORT_MAX_SECONDS && ytIsVerticalOrSquare
+        let isYouTubeShort = youtubeShortEligible
         const ytUploadType = campaign?.youtube_upload_type || 'auto'
         if (ytUploadType === 'shorts') isYouTubeShort = true
         else if (ytUploadType === 'long_form') isYouTubeShort = false
@@ -1557,8 +1684,20 @@ serve(async (req) => {
                   isYouTubeShort,
                   youtubeTitleLanguage
                 )
-                console.log(`Uploading to YouTube: ${ytChannel.channel_name} (${isYouTubeShort ? 'Short' : 'Long Video'})...`)
-                const res = await uploadVideoToYouTube(ytChannel.channel_id, activeToken, videoResult.blob, youtubeTitle, fullCaption, hashtags, isYouTubeShort)
+                // Resolve a custom thumbnail (fixed image, or an auto frame from
+                // the video). Shorts ignore custom thumbnails on YouTube, so only
+                // bother for long-form uploads.
+                let youtubeThumbnail: Blob | null = null
+                if (!isYouTubeShort) {
+                  youtubeThumbnail = await resolveYouTubeThumbnail(
+                    campaign as YouTubeThumbnailConfig | null,
+                    getFileId(post.video_url),
+                    googleAccessToken,
+                    youtubeTitle
+                  )
+                }
+                console.log(`Uploading to YouTube: ${ytChannel.channel_name} (${isYouTubeShort ? 'Short' : 'Long Video'})${youtubeThumbnail ? ' with custom thumbnail' : ''}...`)
+                const res = await uploadVideoToYouTube(ytChannel.channel_id, activeToken, videoResult.blob, youtubeTitle, fullCaption, hashtags, isYouTubeShort, youtubeThumbnail)
                 if ('error' in res) {
                   allSuccess = false; errors.push(`YT: ${res.error.message}`)
                 } else {
