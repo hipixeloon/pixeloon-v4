@@ -576,7 +576,14 @@ export default function CampaignDetail() {
       }
       fetchCampaignData();
     } catch (err) {
-      toast({ title: 'Failed to retry post', variant: 'destructive' });
+      const isDuplicatePending = (err as { code?: string })?.code === '23505';
+      toast({
+        title: 'Failed to retry post',
+        description: isDuplicatePending
+          ? 'A pending post for this video and target already exists — delete one of them first.'
+          : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -613,6 +620,15 @@ export default function CampaignDetail() {
       const result = await response.json();
 
       if (result.error) {
+        // The function errored at the top level. Requeue only if it provably never
+        // started publishing this post (processing_started_at still unstamped) —
+        // the conditional update makes this safe against any race.
+        await supabase
+          .from('scheduled_posts')
+          .update({ status: 'pending' })
+          .eq('id', postId)
+          .eq('status', 'processing')
+          .is('processing_started_at', null);
         toast({ title: 'Post failed', description: result.error, variant: 'destructive' });
       } else {
         toast({ title: 'Post published publicly!', description: 'Reel is now visible to everyone' });

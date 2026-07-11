@@ -1206,12 +1206,13 @@ serve(async (req) => {
         }
       }
 
-      // Normal cron behavior - get pending posts that are due, skipping paused campaigns
+      // Normal cron behavior - get pending posts that are due, skipping paused
+      // campaigns. NULL-status campaigns must still post (neq alone would drop them).
       const { data, error: fetchError } = await supabase
         .from('scheduled_posts')
         .select('id, campaigns!inner(status)')
         .eq('status', 'pending')
-        .neq('campaigns.status', 'paused')
+        .or('status.neq.paused,status.is.null', { foreignTable: 'campaigns' })
         .lte('scheduled_time', new Date().toISOString())
         .order('scheduled_time', { ascending: true })
         .limit(3)
@@ -1329,11 +1330,13 @@ serve(async (req) => {
         }
 
         // If this post already published to at least one platform (partial retry),
-        // reuse the saved caption so all platforms carry the same text.
-        const alreadyPartiallyPosted = !!(post.facebook_post_id || post.instagram_media_id || post.youtube_video_id)
+        // reuse the saved caption verbatim — it already includes branding extras
+        // from the original run, and re-decorating it with a drifted post index
+        // could append a second affiliate link or a different brand caption.
+        const reuseSavedCaption = !!(post.facebook_post_id || post.instagram_media_id || post.youtube_video_id) && !!caption
 
         // Generate AI caption using video thumbnail and metadata
-        if ((post.needs_ai_caption || !caption) && !(alreadyPartiallyPosted && caption)) {
+        if ((post.needs_ai_caption || !caption) && !reuseSavedCaption) {
           const userGeminiKey = userKeys.get('gemini') || null
           
           // Get caption settings from campaign
@@ -1369,14 +1372,16 @@ serve(async (req) => {
         }
 
         // Branding lines, affiliate links, and per-brand caption apply to both
-        // AI-generated and manual captions (idempotent on retries).
-        caption = appendCaptionExtras(
-          caption,
-          postIndexForRules,
-          campaign?.branding_lines as BrandingLinesConfig | null,
-          campaign?.affiliate_links as AffiliateLinksConfig | null,
-          selectedBrandRule?.caption?.trim() || null
-        )
+        // AI-generated and manual captions.
+        if (!reuseSavedCaption) {
+          caption = appendCaptionExtras(
+            caption,
+            postIndexForRules,
+            campaign?.branding_lines as BrandingLinesConfig | null,
+            campaign?.affiliate_links as AffiliateLinksConfig | null,
+            selectedBrandRule?.caption?.trim() || null
+          )
+        }
         
         // Check video quality - REJECT if below 720p (no retry for this video)
         if (!videoResult.qualityValid) {
