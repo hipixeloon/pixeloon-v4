@@ -355,6 +355,7 @@ export type Database = {
           logo_opacity: number | null
           fallback_captions_enabled: boolean | null
           fallback_captions: string[] | null
+          schedule_generating_at: string | null
           youtube_title_language: string | null
         }
         Insert: {
@@ -390,6 +391,7 @@ export type Database = {
           logo_opacity?: number | null
           fallback_captions_enabled?: boolean | null
           fallback_captions?: string[] | null
+          schedule_generating_at?: string | null
           youtube_title_language?: string | null
         }
         Update: {
@@ -425,6 +427,7 @@ export type Database = {
           logo_opacity?: number | null
           fallback_captions_enabled?: boolean | null
           fallback_captions?: string[] | null
+          schedule_generating_at?: string | null
           youtube_title_language?: string | null
         }
         Relationships: []
@@ -601,6 +604,7 @@ export type Database = {
           instagram_media_id: string | null
           needs_ai_caption: boolean | null
           permalink_url: string | null
+          processing_started_at: string | null
           platform: string | null
           post_type: string | null
           scheduled_time: string
@@ -628,6 +632,7 @@ export type Database = {
           instagram_media_id?: string | null
           needs_ai_caption?: boolean | null
           permalink_url?: string | null
+          processing_started_at?: string | null
           platform?: string | null
           post_type?: string | null
           scheduled_time: string
@@ -655,6 +660,7 @@ export type Database = {
           instagram_media_id?: string | null
           needs_ai_caption?: boolean | null
           permalink_url?: string | null
+          processing_started_at?: string | null
           platform?: string | null
           post_type?: string | null
           scheduled_time?: string
