@@ -5,7 +5,8 @@ export async function uploadVideoToYouTube(
   title: string,
   description: string,
   tags: string[],
-  isShort: boolean
+  isShort: boolean,
+  thumbnailBlob: Blob | null = null
 ): Promise<{ id: string; permalinkUrl?: string } | { error: { message: string } }> {
   try {
     console.log(`Starting YouTube upload for channel ${channelId}. Size: ${videoBlob.size}, isShort: ${isShort}`)
@@ -94,9 +95,37 @@ export async function uploadVideoToYouTube(
 
     const result = await uploadRes.json()
     console.log(`YouTube upload completed successfully: ${result.id}`)
-    
-    return { 
-      id: result.id, 
+
+    // Set a custom thumbnail if one was provided. Non-fatal: a thumbnail failure
+    // (e.g. channel not verified for custom thumbnails, or image too large) must
+    // not fail the whole post — the video is already public at this point.
+    if (thumbnailBlob && result.id) {
+      try {
+        if (thumbnailBlob.size > 2 * 1024 * 1024) {
+          console.log(`Skipping thumbnail: ${thumbnailBlob.size} bytes exceeds YouTube's 2MB limit`)
+        } else {
+          const thumbType = thumbnailBlob.type && thumbnailBlob.type.startsWith('image/') ? thumbnailBlob.type : 'image/jpeg'
+          const thumbRes = await fetch(
+            `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${result.id}`,
+            {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${userAccessToken}`, 'Content-Type': thumbType },
+              body: thumbnailBlob,
+            }
+          )
+          if (!thumbRes.ok) {
+            console.log(`Thumbnail set failed (non-fatal): ${thumbRes.status} ${await thumbRes.text()}`)
+          } else {
+            console.log('Custom thumbnail set successfully')
+          }
+        }
+      } catch (thumbErr) {
+        console.log('Thumbnail set exception (non-fatal):', String(thumbErr))
+      }
+    }
+
+    return {
+      id: result.id,
       permalinkUrl: `https://www.youtube.com/watch?v=${result.id}`
     }
 

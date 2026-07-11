@@ -18,6 +18,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { CampaignStats } from '@/components/campaign/CampaignStats';
+import { YouTubeThumbnailSettings, ThumbnailMode } from '@/components/campaign/YouTubeThumbnailSettings';
 
 const TIMEZONES = [
   { value: 'Asia/Kolkata', label: 'India (IST)' },
@@ -82,6 +83,9 @@ interface Campaign {
   custom_caption: string | null;
   youtube_upload_type: string | null;
   youtube_title_language: string | null;
+  youtube_thumbnail_mode: string | null;
+  youtube_thumbnail_url: string | null;
+  youtube_thumbnail_title_overlay: boolean | null;
   fallback_captions_enabled: boolean | null;
   fallback_captions: string[] | null;
   logo_opacity: number | null;
@@ -179,6 +183,9 @@ export default function CampaignDetail() {
   const [hashtagCount, setHashtagCount] = useState(8);
   const [youtubeUploadType, setYoutubeUploadType] = useState<'auto' | 'shorts' | 'long_form'>('auto');
   const [youtubeTitleLanguage, setYoutubeTitleLanguage] = useState<'english' | 'hinglish' | 'hindi'>('english');
+  const [thumbnailMode, setThumbnailMode] = useState<ThumbnailMode>('none');
+  const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [thumbnailTitleOverlay, setThumbnailTitleOverlay] = useState(false);
   const [fallbackCaptionsEnabled, setFallbackCaptionsEnabled] = useState(false);
   const [fallbackCaptionsInput, setFallbackCaptionsInput] = useState('');
   const [logoOpacity, setLogoOpacity] = useState(80);
@@ -258,6 +265,9 @@ export default function CampaignDetail() {
       setHashtagCount(campaignData.hashtag_count || 8);
       setYoutubeUploadType((campaignData.youtube_upload_type as 'auto' | 'shorts' | 'long_form') || 'auto');
       setYoutubeTitleLanguage((campaignData.youtube_title_language as 'english' | 'hinglish' | 'hindi') || 'english');
+      setThumbnailMode((campaignData.youtube_thumbnail_mode as ThumbnailMode) || 'none');
+      setThumbnailUrl(campaignData.youtube_thumbnail_url || '');
+      setThumbnailTitleOverlay(campaignData.youtube_thumbnail_title_overlay === true);
       setFallbackCaptionsEnabled(campaignData.fallback_captions_enabled === true);
       setFallbackCaptionsInput(Array.isArray(campaignData.fallback_captions) ? campaignData.fallback_captions.join('\n') : '');
       setLogoOpacity(typeof campaignData.logo_opacity === 'number' ? campaignData.logo_opacity : 80);
@@ -918,6 +928,9 @@ export default function CampaignDetail() {
         hashtag_count: hashtagCount,
         youtube_upload_type: youtubeUploadType,
         youtube_title_language: youtubeTitleLanguage,
+        youtube_thumbnail_mode: thumbnailMode,
+        youtube_thumbnail_url: thumbnailMode === 'fixed' ? thumbnailUrl.trim() : null,
+        youtube_thumbnail_title_overlay: thumbnailMode === 'auto' ? thumbnailTitleOverlay : false,
         fallback_captions_enabled: fallbackCaptionsEnabled,
         fallback_captions: fallbackCaptionsEnabled ? parsedFallbackCaptions : [],
         logo_opacity: logoOpacity,
@@ -1536,6 +1549,17 @@ export default function CampaignDetail() {
                       <SelectItem value="hindi">Hindi</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="rounded-md border p-3">
+                  <YouTubeThumbnailSettings
+                    mode={thumbnailMode}
+                    setMode={setThumbnailMode}
+                    url={thumbnailUrl}
+                    setUrl={setThumbnailUrl}
+                    titleOverlay={thumbnailTitleOverlay}
+                    setTitleOverlay={setThumbnailTitleOverlay}
+                  />
                 </div>
 
                 <div className="space-y-3 rounded-md border p-3">
