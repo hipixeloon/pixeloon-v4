@@ -47,7 +47,7 @@ serve(async (req) => {
 
             // FB Post Metrics
             if (post.facebook_post_id) {
-              const fbRes = await fetch(`https://graph.facebook.com/v18.0/${post.facebook_post_id}?fields=reactions.summary(true),comments.summary(true),insights.metric(post_video_views)&access_token=${fbPage.access_token}`)
+              const fbRes = await fetch(`https://graph.facebook.com/v21.0/${post.facebook_post_id}?fields=reactions.summary(true),comments.summary(true),insights.metric(post_video_views)&access_token=${fbPage.access_token}`)
               const fbData = await fbRes.json()
               if (!fbData.error) {
                 totalLikes += fbData.reactions?.summary?.total_count || 0
@@ -58,7 +58,7 @@ serve(async (req) => {
 
             // IG Media Metrics
             if (post.instagram_media_id) {
-              const igRes = await fetch(`https://graph.facebook.com/v18.0/${post.instagram_media_id}?fields=like_count,comments_count&access_token=${fbPage.access_token}`)
+              const igRes = await fetch(`https://graph.facebook.com/v21.0/${post.instagram_media_id}?fields=like_count,comments_count&access_token=${fbPage.access_token}`)
               const igData = await igRes.json()
               if (!igData.error) {
                 totalLikes += igData.like_count || 0

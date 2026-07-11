@@ -614,7 +614,7 @@ async function uploadVideoToFacebook(
       console.log(`Starting Facebook REEL upload (reels publishing flow) for ${fileSize} bytes`)
 
       // Step 1: Initialize upload session
-      const initResp = await fetch(`https://graph.facebook.com/v18.0/${pageId}/video_reels`, {
+      const initResp = await fetch(`https://graph.facebook.com/v21.0/${pageId}/video_reels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ upload_phase: 'start', access_token: accessToken })
@@ -661,7 +661,7 @@ async function uploadVideoToFacebook(
         description: description,
       })
 
-      const publishResp = await fetch(`https://graph.facebook.com/v18.0/${pageId}/video_reels`, {
+      const publishResp = await fetch(`https://graph.facebook.com/v21.0/${pageId}/video_reels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: publishParams,
@@ -677,7 +677,7 @@ async function uploadVideoToFacebook(
       let permalinkUrl: string | undefined
       try {
         const verifyResp = await fetch(
-          `https://graph.facebook.com/v18.0/${videoId}?fields=published,permalink_url,status&access_token=${accessToken}`
+          `https://graph.facebook.com/v21.0/${videoId}?fields=published,permalink_url,status&access_token=${accessToken}`
         )
         const verifyJson = await verifyResp.json()
         console.log('Facebook reel publish verification:', JSON.stringify(verifyJson))
@@ -704,7 +704,7 @@ async function uploadVideoToFacebook(
 
   // Step 1: Initialize upload session
   // NOTE: We pass published=true up-front to avoid unpublished assets.
-  const initUrl = `https://graph.facebook.com/v18.0/${pageId}/videos?upload_phase=start&access_token=${accessToken}&file_size=${fileSize}&published=true`
+  const initUrl = `https://graph.facebook.com/v21.0/${pageId}/videos?upload_phase=start&access_token=${accessToken}&file_size=${fileSize}&published=true`
   const initResponse = await fetch(initUrl, { method: 'POST' })
 
   const initResult = await initResponse.json()
@@ -734,7 +734,7 @@ async function uploadVideoToFacebook(
     formData.append('video_file_chunk', chunk, 'video.mp4')
 
     const transferResponse = await fetch(
-      `https://graph.facebook.com/v18.0/${pageId}/videos`,
+      `https://graph.facebook.com/v21.0/${pageId}/videos`,
       { method: 'POST', body: formData }
     )
 
@@ -757,7 +757,7 @@ async function uploadVideoToFacebook(
   }
 
   const finishResponse = await fetch(
-    `https://graph.facebook.com/v18.0/${pageId}/videos`,
+    `https://graph.facebook.com/v21.0/${pageId}/videos`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -777,7 +777,7 @@ async function uploadVideoToFacebook(
   let permalinkUrl: string | undefined
   try {
     const verifyResp = await fetch(
-      `https://graph.facebook.com/v18.0/${finalVideoId}?fields=published,permalink_url,status&access_token=${accessToken}`
+      `https://graph.facebook.com/v21.0/${finalVideoId}?fields=published,permalink_url,status&access_token=${accessToken}`
     )
     const verifyJson = await verifyResp.json()
     console.log('Facebook video publish verification:', JSON.stringify(verifyJson))

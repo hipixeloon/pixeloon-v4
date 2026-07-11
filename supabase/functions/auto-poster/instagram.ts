@@ -46,9 +46,27 @@ export async function uploadVideoToInstagram(
 
     console.log('Got public URL for Instagram:', publicUrl)
 
+    // 2b. Check Instagram's rolling 24h publishing limit up front so we return a
+    // clear, actionable error instead of a cryptic one once the quota is hit.
+    // (Instagram allows ~50 API-published posts per account per 24 hours.)
+    try {
+      const limitRes = await fetch(
+        `https://graph.facebook.com/v21.0/${igAccountId}/content_publishing_limit?fields=quota_usage,config&access_token=${userAccessToken}`
+      )
+      const limitJson = await limitRes.json()
+      const usage = limitJson?.data?.[0]?.quota_usage
+      const quota = limitJson?.data?.[0]?.config?.quota_total ?? 50
+      if (typeof usage === 'number' && usage >= quota) {
+        await supabase.storage.from('temp-videos').remove([fileName])
+        return { error: { message: `Instagram daily publishing limit reached (${usage}/${quota} in the last 24h). This account will resume automatically once older posts age out.` } }
+      }
+    } catch (limitErr) {
+      console.log('IG publishing-limit check skipped (non-fatal):', String(limitErr))
+    }
+
     // 3. Initiate Instagram Reels Upload
     console.log('Step 2: Initiating IG Media Upload...')
-    const mediaUrl = `https://graph.facebook.com/v18.0/${igAccountId}/media`
+    const mediaUrl = `https://graph.facebook.com/v21.0/${igAccountId}/media`
     const initRes = await fetch(mediaUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -82,7 +100,7 @@ export async function uploadVideoToInstagram(
       attempt++
       await new Promise(resolve => setTimeout(resolve, 5000)) // wait 5 seconds
       
-      const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code&access_token=${userAccessToken}`)
+      const statusRes = await fetch(`https://graph.facebook.com/v21.0/${creationId}?fields=status_code&access_token=${userAccessToken}`)
       const statusJson = await statusRes.json()
       
       console.log(`Poll ${attempt}: Status = ${statusJson.status_code}`)
@@ -103,7 +121,7 @@ export async function uploadVideoToInstagram(
 
     // 5. Publish Media
     console.log('Step 4: Publishing IG Media...')
-    const publishUrl = `https://graph.facebook.com/v18.0/${igAccountId}/media_publish`
+    const publishUrl = `https://graph.facebook.com/v21.0/${igAccountId}/media_publish`
     const publishRes = await fetch(publishUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -126,7 +144,7 @@ export async function uploadVideoToInstagram(
     // 6. Get permalink
     let permalinkUrl = undefined
     try {
-      const verifyRes = await fetch(`https://graph.facebook.com/v18.0/${publishJson.id}?fields=permalink&access_token=${userAccessToken}`)
+      const verifyRes = await fetch(`https://graph.facebook.com/v21.0/${publishJson.id}?fields=permalink&access_token=${userAccessToken}`)
       const verifyJson = await verifyRes.json()
       if (verifyJson.permalink) {
         permalinkUrl = verifyJson.permalink
