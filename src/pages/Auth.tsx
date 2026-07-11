@@ -207,10 +207,10 @@ export default function Auth() {
           <Sparkles className="w-8 h-8 text-primary" />
         </div>
         <h1 className="text-ios-large-title text-foreground mb-2">
-          TG Migrate
+          Pixeloon
         </h1>
         <p className="text-ios-body text-muted-foreground">
-          Auto-post to Facebook with AI-powered content
+          Auto-post reels to Facebook, Instagram &amp; YouTube with AI captions
         </p>
       </div>
 

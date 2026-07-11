@@ -33,7 +33,7 @@ async function fetchAllFacebookPagesWithDebug(userAccessToken: string): Promise<
 
   // 1) Pages user has direct access to via /me/accounts
   try {
-    let nextUrl: string | null = `https://graph.facebook.com/v18.0/me/accounts?access_token=${userAccessToken}&limit=100&fields=id,name,access_token,instagram_business_account{id,username}`
+    let nextUrl: string | null = `https://graph.facebook.com/v21.0/me/accounts?access_token=${userAccessToken}&limit=100&fields=id,name,access_token,instagram_business_account{id,username}`
     while (nextUrl) {
       const pagesResponse = await fetch(nextUrl)
       const pagesData = await pagesResponse.json() as {
@@ -62,7 +62,7 @@ async function fetchAllFacebookPagesWithDebug(userAccessToken: string): Promise<
   // 2) Also try Business-owned pages (requires business_management)
   try {
     const bizRes = await fetch(
-      `https://graph.facebook.com/v18.0/me/businesses?access_token=${userAccessToken}&limit=100&fields=id,name`
+      `https://graph.facebook.com/v21.0/me/businesses?access_token=${userAccessToken}&limit=100&fields=id,name`
     )
     const bizData = await bizRes.json() as {
       data?: { id: string; name: string }[]
@@ -79,7 +79,7 @@ async function fetchAllFacebookPagesWithDebug(userAccessToken: string): Promise<
 
       for (const biz of businesses) {
         try {
-          let ownedNext: string | null = `https://graph.facebook.com/v18.0/${biz.id}/owned_pages?access_token=${userAccessToken}&limit=100&fields=id,name,access_token,instagram_business_account{id,username}`
+          let ownedNext: string | null = `https://graph.facebook.com/v21.0/${biz.id}/owned_pages?access_token=${userAccessToken}&limit=100&fields=id,name,access_token,instagram_business_account{id,username}`
           while (ownedNext) {
             const ownedRes = await fetch(ownedNext)
             const ownedData = await ownedRes.json() as {
@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
       
       // Request all page-related permissions
       // Note: business_management will be ignored if your app isn't approved for it.
-      const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
+      const authUrl = `https://www.facebook.com/v21.0/dialog/oauth?` +
         `client_id=${facebookAppId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `scope=pages_show_list,pages_read_engagement,pages_manage_posts,pages_read_user_content,business_management,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights&` +
@@ -315,7 +315,7 @@ Deno.serve(async (req) => {
 
       // Exchange code for short-lived access token
       const tokenResponse = await fetch(
-        `https://graph.facebook.com/v18.0/oauth/access_token?` +
+        `https://graph.facebook.com/v21.0/oauth/access_token?` +
         `client_id=${facebookAppId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `client_secret=${facebookAppSecret}&` +
@@ -336,7 +336,7 @@ Deno.serve(async (req) => {
 
       // Exchange for long-lived token (60 days)
       const longLivedResponse = await fetch(
-        `https://graph.facebook.com/v18.0/oauth/access_token?` +
+        `https://graph.facebook.com/v21.0/oauth/access_token?` +
         `grant_type=fb_exchange_token&` +
         `client_id=${facebookAppId}&` +
         `client_secret=${facebookAppSecret}&` +

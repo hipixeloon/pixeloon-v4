@@ -230,11 +230,40 @@ Ongoing management from the campaign page:
 
 ### How videos are classified
 
-- Vertical/square videos ≤ 90s → Facebook **Reel** / IG Reel / YouTube **Short**.
-- Longer or horizontal videos → regular video upload (YouTube type can be forced
-  per campaign).
+- Vertical/square videos ≤ 90s → Facebook **Reel** / Instagram **Reel**.
+- YouTube (in Auto mode): vertical/square **≤ 3 min → Short**, else long-form.
+  You can force Shorts or Long-form per campaign.
+- Longer or horizontal videos → regular video upload.
 - Videos under **720p** or with extreme aspect ratios are rejected (not retried)
   so low-quality content never goes out.
+
+---
+
+## Platform limits you cannot exceed (important — plan your volume around these)
+
+These are hard limits enforced by Facebook / Instagram / YouTube, not by
+Pixeloon. When you hit one, the affected post is marked **Failed** with the
+reason; it does not crash anything and other platforms still post. Know them
+before you sell/scale:
+
+| Platform | Limit | What happens at the limit | How to raise it |
+|---|---|---|---|
+| **YouTube** | **~6 video uploads per day** per Google Cloud OAuth project (each upload costs 1,600 of the default 10,000 daily quota units) | 7th upload/day fails with `quotaExceeded`; the post is marked Failed | Request a [YouTube API quota increase](https://support.google.com/youtube/contact/yt_api_form) (free, needs a use-case review). Each user has their own project → their own 6/day, so this is per-user. |
+| **YouTube custom thumbnails** | Channel must be **phone-verified** | Thumbnail is skipped (non-fatal), video still posts | Verify the channel at youtube.com/verify |
+| **Instagram** | **~50 API-published posts per account / 24h** (rolling) | Pixeloon pre-checks and fails the post with "daily publishing limit reached"; auto-resumes as older posts age out | Not raisable — spread posts across more accounts/days |
+| **Instagram** | Business/Creator account **linked to a Facebook Page** only | Personal IG can't be imported | Convert IG to Business/Creator and link a Page |
+| **Facebook** | Standard Page rate limits | Rare at normal volume; token errors need a reconnect | — |
+| **Gemini (free tier)** | ~15 requests/min, daily cap | Falls back to your fallback captions | Add billing to the Google AI project |
+
+**Avoiding spam flags / bans** (built-in, but respect them):
+- Keep post-time **randomization on** (Pixeloon adds a ± jitter per slot) so you
+  don't post at identical robotic timestamps.
+- Use **AI captions** or 2–3 rotating **fallback captions** rather than the exact
+  same text every time — identical repeated captions are the #1 spam signal.
+- Don't point many accounts at the same video at the same minute; the scheduler
+  already spreads collisions, keep that setting on.
+- Start slow on a fresh account (a few posts/day) and ramp up; brand-new
+  accounts blasting 50 posts/day get flagged fastest.
 
 ---
 
@@ -263,6 +292,8 @@ After setup, verify each item:
 | "A pending post for this video already exists" on Retry | The same video is already queued for that page/channel — delete one of the two |
 | Facebook error 190 / token expired | Reconnect Facebook in Settings |
 | YouTube upload 401 | Reconnect YouTube; ensure your Google user is a test user (or app is published) |
+| YouTube "quotaExceeded" after ~6 uploads | Daily API quota hit — see the platform-limits table; request a quota increase |
+| Instagram "daily publishing limit reached" | Hit IG's ~50/24h cap — resumes automatically as older posts age out |
 | Instagram "media processing failed" | IG requires MP4 (H.264/AAC), 9:16 preferred, ≤ 90s for Reels |
 | Captions are generic/fallback | Gemini key missing or quota exhausted — posting continues with fallback captions |
 | "Not authorized" calling functions | You are logged out, or the frontend `.env` points at a different project |
